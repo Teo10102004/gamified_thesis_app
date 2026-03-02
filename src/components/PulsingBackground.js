@@ -64,12 +64,11 @@ export default function PulsingBackground({ color = "#FF00FF"}) {
 
 const styles = StyleSheet.create({
     container: {
-        //we make it wavy at the top of the screen by giving it a large border radius, and we make it larger than the screen width to create a more dramatic pulsing effect as it scales up and down.
-        position: 'absolute', // Position the pulsing background absolutely to allow it to overlap other content
-        bottom: -700 , // Move the pulsing background up to create a wavy effect at the top of the screen
-        left: -150, // Move the pulsing background to the left to center it on the screen
-        width: 300, // Set the width of the pulsing background to be larger than the screen width for a more dramatic effect
-        height: 300, // Set the height of the pulsing background
-        borderRadius: 150, // Make the pulsing background circular by setting a large border radius
+        position: 'absolute', 
+        bottom: -700 , 
+        left: -150, 
+        width: 300, 
+        height: 300, 
+        borderRadius: 150, 
     },
 });
