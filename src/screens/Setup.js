@@ -7,13 +7,20 @@ import {
     StyleSheet,
     Text,
     TextInput,
-    TouchableOpacity,
+    TouchableOpacity,    
     View,
     LayoutAnimation,
     UIManager
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../services/authService';
+import { updateFullProfile } from '../services/userService';
+import ImageColors from 'react-native-image-colors';
+import FandomSearch from '../components/FandomSearch';
+
+import { useNavigation } from '@react-navigation/native';  // Import the useNavigation hook from React Navigation to enable navigation to the Home screen after character setup is complete
+
+
 
 const NEON_PINK = '#FF00FF';
 const NEON_BLUE = '#00FFFF';
@@ -24,7 +31,11 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
     UIManager.setLayoutAnimationEnabledExperimental(true); // Enable LayoutAnimation on Android for smooth transitions when showing/hiding the character setup form
 }
 
-export default function Setup(navigation) { //the navigation prop is passed in so that we can route the user to the main app after they finish setting up their character
+export default function Setup() { 
+
+
+    const navigation = useNavigation(); // Get the navigation object from the useNavigation hook to enable navigation to the Home screen after character setup is complete
+
     //set state for the character setup form
     const [step, setStep] = useState(1); // State variable to track the current step of the character setup process
     const [name, setName] = useState('');
@@ -51,21 +62,57 @@ export default function Setup(navigation) { //the navigation prop is passed in s
         handleNext(); // Move to the next step of the character setup process after selecting a class
     };
 
-    const handleFinish = async (themeId, fandomName) => {
+    const handleFinish = async (themeId, fandomName, imageUrl) => {
         setLoading(true); // Set loading to true to indicate that the profile update process has started
 
         try {
             const user = await getCurrentUser(); // Get the current authenticated user using the getCurrentUser function from the authService
+            
             if (!user) {
                 throw new Error("No authenticated user found. Please log in again."); // If there is no authenticated user, throw an error to be handled by the catch block
             }
 
-            await updateFullProfile(user, { name, playerClass, themeId, fandomName }); // Update the user's profile with the provided name, player class, theme ID, and fandom name using the updateFullProfile function from the userService
+            let primary = NEON_PINK; // Default primary color
+            let secondary = NEON_BLUE; // Default secondary color
+            let bg = DARK_BG; // Default background color
+
+            if(imageUrl){
+                const colors = await ImageColors.getColors(imageUrl, {
+                    fallback: NEON_PINK, // Fallback color if the image colors cannot be extracted
+                    cache: true, // Cache the extracted colors for better performance on subsequent requests
+                    key: imageUrl, // Use the image URL as the cache key to ensure that colors are cached per image
+                })
+
+                //ios and android return different color properties, so we need to check the platform
+                if(colors.platform === 'android'){
+                    // Prioritize the loudest, most neon colors first!
+                    primary = colors.vibrant || colors.lightVibrant || colors.dominant || primary; 
+                    secondary = colors.lightVibrant || colors.vibrant || colors.average || secondary; 
+                    
+                    // Keep the background very dark so the vibrant text actually pops!
+                    bg = colors.darkVibrant || '#0A0A0A'; 
+                }else{
+                    primary = colors.primary || primary; 
+                    // iOS has a 'detail' color that is usually more vibrant than secondary
+                    secondary = colors.detail || colors.secondary || secondary; 
+                    bg = colors.background || '#0A0A0A'; 
+                }
+            }
+
+            await updateFullProfile(user.id, { 
+                userName: name,
+                playerClass: playerClass, 
+                themeId: themeId, 
+                fandomName: fandomName, 
+                primaryColor: primary,
+                secondaryColor: secondary,
+                backgroundColor: bg }); // Update the user's profile with the provided name, player class, theme ID, and fandom name using the updateFullProfile function from the userService
+                
 
             Alert.alert('Character Setup Complete', `Welcome to the Gamified Learning App, ${name}!`); // Show a success alert when the character setup is complete
 
-            //TODO: Route the user to the main app here after they finish setting up their character!
-            //navigation.replace('MainApp'); // Example of how to route the user to the main app after character setup is complete
+            navigation.navigate('Home'); // Route the user to the Home screen after completing the character setup process
+
         } catch (error) {
             Alert.alert('Error saving profile', error.message); // Show an error alert if there is an error during the profile update process
         } finally {
@@ -74,7 +121,7 @@ export default function Setup(navigation) { //the navigation prop is passed in s
     };
 
 
-    //ui rendering
+    //ui rendering using conditional rendering to show different steps of the character setup process
     
     return (
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}> 
@@ -109,17 +156,17 @@ export default function Setup(navigation) { //the navigation prop is passed in s
                         
                         <TouchableOpacity style={styles.classButton} onPress={() => selectClass('Gamer')}>
                             <Ionicons name="game-controller" size={24} color={NEON_PINK} />
-                            <Text style={styles.classButtonText}>Gamer</Text>
+                            <Text style={styles.classButtonText}>Game Enjoyer</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity style={styles.classButton} onPress={() => selectClass('Otaku')}>
                             <Ionicons name="book" size={24} color={NEON_PINK} />
-                            <Text style={styles.classButtonText}>Otaku</Text>
+                            <Text style={styles.classButtonText}>Anime Enjoyer</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity style={styles.classButton} onPress={() => selectClass('Cinephile')}>
                             <Ionicons name="film" size={24} color={NEON_PINK} />
-                            <Text style={styles.classButtonText}>Cinephile</Text>
+                            <Text style={styles.classButtonText}>Movie Enjoyer</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity onPress={() => { animateNextStep(); setStep(1); }} style={{marginTop: 20}}>
@@ -134,14 +181,12 @@ export default function Setup(navigation) { //the navigation prop is passed in s
                         <Text style={styles.headerText}>The Final Choice</Text>
                         <Text style={styles.subtitleText}>Searching the database for {playerClass || 'Unknown'} titles...</Text>
                         
-                        {/* We will drop your FandomSearch API Component right here in the next step! */}
-                        <View style={styles.placeholderBox}>
-                            <Text style={{color: 'gray'}}>API Search UI loading...</Text>
-                        </View>
+                        {/*Search component that takes in the playerClass as a prop and returns a list of fandoms to choose from*/}
+                        <FandomSearch playerClass={playerClass} onSelect={handleFinish} />
 
                         {/* Temporary button just to test backend save function */} 
                         <TouchableOpacity  
-                            onPress={() => handleFinalSave(1, 'Test Fandom')} 
+                            onPress={() => handleFinish(1, 'Test Fandom')} 
                             style={[styles.button, { borderColor: NEON_PINK }]}
                             disabled={loading}
                         > 

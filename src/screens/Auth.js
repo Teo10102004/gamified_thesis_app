@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
+import { supabase } from '../services/supabase';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons'; 
 import PulsingBackground from '../components/PulsingBackground';
 // --- NEW API SERVICE IMPORT ---
 // We removed the direct Supabase import and are now using our separated backend service!
 import { signUpUser, signInUser } from '../services/authService'; 
+
 
 const NEON_PINK = '#FF00FF'; //defining as constant so that we can change the color if we want to in the future
 const NEON_BLUE = '#00FFFF'; 
@@ -30,17 +32,33 @@ export default function Auth({ navigation }) {
             if (isLogin) { 
                 // --- SEPARATED LOGIN LOGIC ---
                 // We just call our service. It handles the Supabase complexity.
-                await signInUser(email, password); 
-                Alert.alert('Success', 'Logged in successfully!'); 
-                
-                // TODO: Send existing users straight to the main app here!
+                const data = await signInUser(email, password);
+                const userId = data?.user?.id; // Get the user ID from the sign-in response
+
+                if (!userId) {
+                    throw new Error("Authentication failed. Please check your credentials and try again."); // If there is no user ID in the response, throw an error to be handled by the catch block
+                }
+
+                //check if the user has a profile in the database, if not, route them to the setup screen
+                const { data: profile, error } = await supabase
+                    .from('User')
+                    .select('userName')
+                    .eq('userId', userId)
+                    .single();
+
+                if(profile && profile.userName){
+                    Alert.alert('Welcome Back!', `Welcome back to the Gamified Learning App, ${profile.userName}!`); // Show a welcome back alert with the user's name if the profile exists
+                    navigation.navigate('Home'); // Route existing users to the Home screen
+                }else{
+                    navigation.navigate('Setup'); // Route users without a profile to the Setup screen
+                }
+
             } else {
                 // --- SEPARATED SIGNUP LOGIC ---
                 await signUpUser(email, password); 
                 Alert.alert('Success', 'Account created! Please check Mailtrap to confirm your email.'); 
                 
-                // Route new users to the awesome RPG Character Setup screen!
-                navigation.navigate('Setup');
+                setIsLogin(true); // Switch to login mode after successful sign-up so the user can log in
             }
         } catch (error) {
             Alert.alert('Authentication Error', error.message); // Show an error alert if there is an error
@@ -147,7 +165,7 @@ const styles = StyleSheet.create({
         borderColor: NEON_PINK, 
         borderWidth: 1, 
         alignItems: 'center', 
-        width: '100%', // Added width to ensure it matches your previous layout
+        width: '100%', 
         marginBottom: 10,
     },
     toggleButtonText: {

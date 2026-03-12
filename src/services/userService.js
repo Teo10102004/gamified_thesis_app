@@ -1,4 +1,4 @@
-import { supabase } from 'services/supabase'; 
+import { supabase } from './supabase'; 
 
 export const createUserProfile = async (userId, email) => { // Insert a new user profile into the 'User' table with the provided userId and email
     const { error } = await supabase

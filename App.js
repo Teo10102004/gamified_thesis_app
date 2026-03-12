@@ -8,6 +8,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import Auth from './src/screens/Auth'; 
 import Setup from './src/screens/Setup';
+import Home from './src/screens/Home';
 
 const Stack = createNativeStackNavigator(); // Create a stack navigator for handling screen navigation
 
@@ -17,6 +18,7 @@ export default function App() {
       <Stack.Navigator initialRouteName="Auth" screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Auth" component={Auth} /> 
         <Stack.Screen name="Setup" component={Setup} />
+        <Stack.Screen name="Home" component={Home} />
       </Stack.Navigator>
     </NavigationContainer>
   );

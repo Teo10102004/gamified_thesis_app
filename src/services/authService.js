@@ -36,9 +36,14 @@ export const signInUser = async (email, password) => {      // Use the signInWit
 };
 
 export const getCurrentUser = async () => { // Use the getUser method from Supabase's auth module to retrieve the currently authenticated user's information
-    const { data: { user }, error } = supabase.auth.getUser();
-    if (error) throw error;
-    return user?.userId || null; // Return the userId of the currently authenticated user, or null if there is no authenticated user
+    const {data, error} = await supabase.auth.getUser();
+
+    if(error){
+        console.error('Error fetching current user:', error);
+        return null; // Return null if there was an error fetching the user information
+    }
+
+    return data?.user || null; // Return the user object if it exists, otherwise return null
 }
 
 export const logoutUser = async () => { // Use the signOut method from Supabase's auth module to log out the current user
