@@ -2,7 +2,7 @@
 
 A cross-platform mobile application designed to make learning engaging through gamification. Built with **React Native (Expo)** and powered by **Supabase** for secure backend authentication and database management.
 
-This project is currently being developed as a university thesis.
+This project is currently being developed for my university thesis.
 
 ## ✨ Features So Far
 * **Sleek User Interface:** Custom dark-mode design with glowing neon accents.
