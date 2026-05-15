@@ -17,6 +17,7 @@ import { getCurrentUser } from '../services/authService';
 import { updateFullProfile } from '../services/userService';
 import ImageColors from 'react-native-image-colors';
 import FandomSearch from '../components/FandomSearch';
+import { generateSeriesAesthetic, generateFandomRanks } from '../services/aiService';
 
 import { useNavigation } from '@react-navigation/native';  // Import the useNavigation hook from React Navigation to enable navigation to the Home screen after character setup is complete
 
@@ -99,6 +100,44 @@ export default function Setup() {
                 }
             }
 
+            // --- THE VISUAL DNA FORGE ---
+            // We ask Gemini to analyze the series and give us the UI specs
+            let visualConfig = {
+                glowIntensity: 10,
+                shadowOpacity: 0.5,
+                animationSpeed: 300,
+                borderRadius: 15
+            };
+
+            try {
+                // Run both AI calls in parallel to save time
+                const [aesthetic, fandomRanks] = await Promise.all([
+                    generateSeriesAesthetic(fandomName),
+                    generateFandomRanks(fandomName, playerClass),
+                ]);
+
+                if (aesthetic) {
+                    visualConfig = aesthetic;
+                    primary = aesthetic.primaryColor || primary;
+                    secondary = aesthetic.secondaryColor || secondary;
+                    bg = aesthetic.backgroundColor || bg;
+                }
+
+                console.log('[RANKS] Generated ranks:', JSON.stringify(fandomRanks));
+
+                // Save the rank hierarchy (as a JSON string) to be read by Home.js
+                if (fandomRanks && fandomRanks.length > 0) {
+                    const rankSaveResult = await updateFullProfile(user.id, {
+                        fandom_ranks: JSON.stringify(fandomRanks)
+                    });
+                    console.log('[RANKS] Save result:', JSON.stringify(rankSaveResult));
+                } else {
+                    console.warn('[RANKS] No ranks returned from Gemini — fandom_ranks will not be saved.');
+                }
+            } catch (aiError) {
+                console.warn('[RANKS] AI Forge failed:', aiError.message);
+            }
+
             await updateFullProfile(user.id, { 
                 userName: name,
                 playerClass: playerClass, 
@@ -106,7 +145,9 @@ export default function Setup() {
                 fandomName: fandomName, 
                 primaryColor: primary,
                 secondaryColor: secondary,
-                backgroundColor: bg }); // Update the user's profile with the provided name, player class, theme ID, and fandom name using the updateFullProfile function from the userService
+                backgroundColor: bg,
+                visualConfig: visualConfig // Save the DNA!
+            }); 
                 
 
             Alert.alert('Character Setup Complete', `Welcome to the Gamified Learning App, ${name}!`); // Show a success alert when the character setup is complete
@@ -184,16 +225,7 @@ export default function Setup() {
                         {/*Search component that takes in the playerClass as a prop and returns a list of fandoms to choose from*/}
                         <FandomSearch playerClass={playerClass} onSelect={handleFinish} />
 
-                        {/* Temporary button just to test backend save function */} 
-                        <TouchableOpacity  
-                            onPress={() => handleFinish(1, 'Test Fandom')} 
-                            style={[styles.button, { borderColor: NEON_PINK }]}
-                            disabled={loading}
-                        > 
-                            <Text style={[styles.buttonText, { color: NEON_PINK }]}>
-                                {loading ? 'Saving to Database...' : 'Finish Setup (Test)'}
-                            </Text> 
-                        </TouchableOpacity>
+                        
 
                         <TouchableOpacity onPress={() => { animateNextStep(); setStep(2); }} style={{marginTop: 20}}>
                             <Text style={{color: 'gray', textAlign: 'center'}}>← Change Class</Text>
