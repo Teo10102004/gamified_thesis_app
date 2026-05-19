@@ -21,6 +21,61 @@ const searchKitsuFallback = async (query) => {
     return [];
 };
 
+// --- RAWG API (Games) ---
+const RAWG_API_KEY = process.env.EXPO_PUBLIC_RAWG_API_KEY;
+
+const searchRAWG = async (query) => {
+    console.log(`[API] RAWG search for: ${query}`);
+    try {
+        const response = await fetch(
+            `https://api.rawg.io/api/games?key=${RAWG_API_KEY}&search=${encodeURIComponent(query)}&page_size=5`
+        );
+        if (!response.ok) {
+            console.error(`[API] RAWG Error: ${response.status}`);
+            return [];
+        }
+        const json = await response.json();
+        return (json.results || []).map(item => ({
+            id: `rawg-${item.id}`,
+            title: item.name,
+            imageUrl: item.background_image || null,
+        }));
+    } catch (e) {
+        console.error('[API] RAWG search failed:', e.message);
+        return [];
+    }
+};
+
+// --- TMDB API (Movies & TV) ---
+const TMDB_API_KEY = process.env.EXPO_PUBLIC_TMDB_API_KEY;
+
+const searchTMDB = async (query) => {
+    console.log(`[API] TMDB search for: ${query}`);
+    try {
+        const response = await fetch(
+            `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&page=1&include_adult=false`
+        );
+        if (!response.ok) {
+            console.error(`[API] TMDB Error: ${response.status}`);
+            return [];
+        }
+        const json = await response.json();
+        return (json.results || [])
+            .filter(item => item.media_type === 'movie' || item.media_type === 'tv')
+            .slice(0, 5)
+            .map(item => ({
+                id: `tmdb-${item.id}`,
+                title: item.title || item.name,
+                imageUrl: item.poster_path
+                    ? `https://image.tmdb.org/t/p/w200${item.poster_path}`
+                    : null,
+            }));
+    } catch (e) {
+        console.error('[API] TMDB search failed:', e.message);
+        return [];
+    }
+};
+
 export const searchFandoms = async (playerClass, query, attempt = 1) => {
     if (!query || query.length < 3) return [];
 
@@ -39,8 +94,6 @@ export const searchFandoms = async (playerClass, query, attempt = 1) => {
 
             if (!response.ok) {
                 console.error(`[API] Jikan Error: ${response.status}`);
-                
-                // If Jikan is overwhelmed (429/504), we switch to Kitsu immediately!
                 if (playerClass === 'Otaku') return await searchKitsuFallback(query);
                 return [];
             }
@@ -53,15 +106,21 @@ export const searchFandoms = async (playerClass, query, attempt = 1) => {
                     imageUrl: item.images?.jpg?.image_url || item.images?.webp?.image_url,
                 }));
             } else {
-                // If Jikan returns NO results, maybe Kitsu has them!
                 return await searchKitsuFallback(query);
             }
-        } 
-        
-        // ... Placeholder results for other classes ...
-        if (playerClass === 'Gamer') return [{ id: 'games-soon', title: "Games library loading...", imageUrl: null }];
-        if (playerClass === 'Cinephile') return [{ id: 'movies-soon', title: "Movies library loading...", imageUrl: null }];
+        }
 
+        if (playerClass === 'Gamer') {
+            clearTimeout(timeoutId);
+            return await searchRAWG(query);
+        }
+
+        if (playerClass === 'Cinephile') {
+            clearTimeout(timeoutId);
+            return await searchTMDB(query);
+        }
+
+        clearTimeout(timeoutId);
         return [];
 
     } catch (error) {
@@ -72,7 +131,6 @@ export const searchFandoms = async (playerClass, query, attempt = 1) => {
             return searchFandoms(playerClass, query, attempt + 1);
         }
 
-        // If all Jikan attempts fail (including timeouts), try Kitsu as a last resort!
         if (playerClass === 'Otaku') return await searchKitsuFallback(query);
         
         return [];

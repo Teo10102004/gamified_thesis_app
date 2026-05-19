@@ -6,6 +6,7 @@ import { supabase } from '../services/supabase';
 import { getCurrentUser, logoutUser } from '../services/authService';
 import { fetchUserTotalXPWithReading } from '../services/userService';
 import { useTheme } from '../context/ThemeContext'; // Sync colors into global theme after login
+import FandomBackground from '../components/FandomBackground';
 
 
 const { width, height } = Dimensions.get('window');
@@ -109,7 +110,8 @@ export default function Home({ navigation }) {
     const progress = stats.currentXP / xpForNextLevel;
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+        <View style={styles.container}>
+            <FandomBackground showAnimation={true} />
 
             {/* Top Bar */}
             <View style={styles.topBar}>
@@ -126,7 +128,7 @@ export default function Home({ navigation }) {
             <View style={[
                 styles.card, 
                 { 
-                    backgroundColor: 'rgba(0,0,0,0.5)', 
+                    backgroundColor: '#0A0A0A', // Opaque so the glow doesn't bleed inside
                     borderColor: primaryColor,
                     // --- AI GLOW ---
                     shadowColor: primaryColor,
@@ -137,17 +139,20 @@ export default function Home({ navigation }) {
                     borderRadius: theme.visualConfig?.borderRadius || 20
                 }
             ]}>
-                <Text style={[styles.fandomText, { color: secondaryColor }]}>{profile.fandomName}</Text>
-                <Text style={[styles.userName, { color: primaryColor }]}>{profile.userName}</Text>
-                <Text style={[styles.classBadge, { color: '#FFFFFF' }]}>
+                <Text style={[styles.fandomText, { color: secondaryColor }]} numberOfLines={1} adjustsFontSizeToFit>{profile.fandomName}</Text>
+                <Text style={[styles.userName, { color: primaryColor }]} numberOfLines={1} adjustsFontSizeToFit>{profile.userName}</Text>
+                <Text style={[styles.classBadge, { color: '#FFFFFF' }]} numberOfLines={1} adjustsFontSizeToFit>
                     {(() => {
                         // Parse the AI-generated fandom rank array saved during Setup
                         // Falls back to the generic playerClass if ranks aren't generated yet
                         try {
                             const ranks = profile.fandom_ranks ? JSON.parse(profile.fandom_ranks) : null;
-                            const rankTitle = ranks && ranks[stats.level - 1]
-                                ? ranks[stats.level - 1]
-                                : profile.playerClass;
+                            let rankTitle = profile.playerClass;
+                            if (ranks && ranks.length > 0) {
+                                // Cap the index to the highest available rank if they over-level
+                                const rankIndex = Math.min(stats.level - 1, ranks.length - 1);
+                                rankTitle = ranks[rankIndex];
+                            }
                             return `Lv. ${stats.level}  ${rankTitle}`;
                         } catch {
                             return `Lv. ${stats.level}  ${profile.playerClass}`;
@@ -172,7 +177,7 @@ export default function Home({ navigation }) {
                 style={[
                     styles.questButton, 
                     { 
-                        backgroundColor: 'rgba(0,0,0,0.4)', 
+                        backgroundColor: '#0A0A0A', 
                         borderColor: secondaryColor,
                         // --- AI GLOW ---
                         shadowColor: secondaryColor,
@@ -262,7 +267,10 @@ export default function Home({ navigation }) {
                         <Text style={[styles.menuText, { color: '#FFF' }]}>Learning Sessions</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity style={styles.menuItem} onPress={() => Alert.alert("Routing...", "To Community")}>
+                    <TouchableOpacity style={styles.menuItem} onPress={() => {
+                        toggleMenu();
+                        navigation.navigate('CommunityFeed');
+                    }}>
                         <Ionicons name="globe-outline" size={24} color={secondaryColor} />
                         <Text style={[styles.menuText, { color: '#FFF' }]}>Community Feed</Text>
                     </TouchableOpacity>

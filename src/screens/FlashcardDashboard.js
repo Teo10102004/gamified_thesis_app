@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
+import FandomBackground from '../components/FandomBackground';
 import { getCurrentUser } from '../services/authService';
 import { getUserDecks, deleteDeck } from '../services/userService';
 
@@ -58,7 +59,7 @@ export default function FlashcardDashboard({ navigation }) {
             styles.deckCard, 
             { 
                 borderColor: theme.primaryColor, 
-                backgroundColor: 'rgba(255,255,255,0.05)',
+                backgroundColor: '#0A0A0A',
                 // --- AI VISUAL DNA ---
                 // Applying dynamic visual configuration from the theme object
                 borderRadius: theme.visualConfig?.borderRadius || 15,
@@ -80,7 +81,7 @@ export default function FlashcardDashboard({ navigation }) {
                     <Ionicons name="albums" size={24} color="#FFF" />
                 </View>
                 <View style={styles.textContainer}>
-                    <Text style={[styles.deckTitle, { color: theme.textColor }]}>{item.title}</Text>
+                    <Text style={[styles.deckTitle, { color: theme.textColor }]} numberOfLines={2}>{item.title}</Text>
                     <Text style={[styles.deckStats, { color: 'gray' }]}>{item.cardCount} Cards</Text>
                 </View>
             </TouchableOpacity>
@@ -92,7 +93,8 @@ export default function FlashcardDashboard({ navigation }) {
     );
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+        <SafeAreaView style={styles.container}>
+            <FandomBackground />
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()}>
                     <Ionicons name="arrow-back" size={28} color={theme.secondaryColor} />

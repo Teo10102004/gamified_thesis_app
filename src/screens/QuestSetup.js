@@ -3,13 +3,15 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Activi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
+import FandomBackground from '../components/FandomBackground';
 
 // We use these tools to let the user pick a file and then read that file's content.
 import * as DocumentPicker from 'expo-document-picker'; 
 // Expo 54 requires us to import from '/legacy' if we want to use the older readAsStringAsync method.
 import * as FileSystem from 'expo-file-system/legacy'; 
-import { generateQuizFromFile } from '../services/aiService'; 
+import { generateQuizFromFile } from '../services/aiService';
 import { createNewQuiz, saveQuizQuestions } from '../services/userService'; // Import our new tool for creating quiz records
+import { getCurrentUser } from '../services/authService';
 
 export default function QuestSetup({ navigation }) {
     const { theme } = useTheme();
@@ -82,10 +84,13 @@ export default function QuestSetup({ navigation }) {
             // If the AI successfully gave us back a list of questions...
             if (generatedQuestions && generatedQuestions.length > 0) {
                 
+                const user = await getCurrentUser();
+                if (!user) throw new Error("Not logged in");
+
                 // --- THE DATABASE FIX ---
                 // Before we start playing, we register this specific quiz in the database.
-                // We now use the 'questName' that the user typed in!
-                const quizResult = await createNewQuiz(questName, `AI quest generated from ${selectedFile.name}`);
+                // We pass the user.id so it is linked ONLY to the creator.
+                const quizResult = await createNewQuiz(user.id, questName, `AI quest generated from ${selectedFile.name}`);
 
                 if (quizResult.success) {
                     // --- THE REDO FIX ---
@@ -115,7 +120,9 @@ export default function QuestSetup({ navigation }) {
     };
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+        <SafeAreaView style={styles.container}>
+            <FandomBackground />
+            
             
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()}>

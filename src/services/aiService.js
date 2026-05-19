@@ -2,13 +2,13 @@
 
 // IMPORTANT: Ensure this key was created inside your new PAID Google Cloud Project!
 // This key acts as your "password" to use Google's powerful AI models.
-const GEMINI_API_KEY = 'AIzaSyB1j-V-07Lpan1PLDmsAyoS3ne8ntxrP7k'; 
+const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY; 
 
-// We define our models in an object so it's easy to switch them out in one place later.
-const MODELS = {
-    PRIMARY: "gemini-2.5-flash",      // The "smartest" and most capable model for complex reasoning.
-    FALLBACK: "gemini-2.5-flash-lite"  // The faster, lighter version used as a "backup" if the primary is busy.
-};
+// We define our models in an array to create a fallback chain.
+const MODELS = [
+    "gemini-2.5-flash",       // Primary: The smartest and most capable model.
+    "gemini-2.5-flash-lite"   // 1st Fallback: The faster, lighter version.
+];
 
 // This helper function builds the full URL needed to talk to the Google API.
 // It uses a "template literal" (the backticks ``) to inject the model name and your API key into the string.
@@ -46,15 +46,50 @@ const parseAIResponse = (data) => {
     }
 };
 
-// This is the "Brain" of our service. It handles the actual communication and the "Plan B" backup logic.
-const callGemini = async (payload, model = MODELS.PRIMARY) => {
+// Helper: wait for a number of milliseconds (used for retry delays)
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// This is the "Brain" of our service. It handles the actual communication, retry logic, and "Plan B" backup.
+const callGemini = async (payload, modelIndex = 0, attempt = 1) => {
+    const model = MODELS[modelIndex];
+    if (!model) {
+        console.error(`[AI] All models exhausted.`);
+        return null;
+    }
+
+    // Retries: 3 for primary model, 1 for fallbacks to avoid long wait times for the user
+    const MAX_RETRIES = modelIndex === 0 ? 3 : 1;
+    
     try {
         // We use 'fetch' to send our prompt to Google. 'await' makes the code wait until the reply comes back.
         const response = await fetch(getApiUrl(model), {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }, // We tell Google we are sending them a JSON object.
-            body: JSON.stringify(payload) // We turn our JavaScript object into a text string for the transmission.
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
+
+        console.log(`[AI] ${model} HTTP status: ${response.status} (attempt ${attempt}/${MAX_RETRIES})`);
+
+        // --- RETRY LOGIC FOR RATE LIMITS (429) ---
+        if (response.status === 429) {
+            if (attempt < MAX_RETRIES) {
+                // Exponential backoff: wait 2s, then 4s, then 8s...
+                const delay = Math.pow(2, attempt) * 1000;
+                console.warn(`[AI] Rate limited. Waiting ${delay / 1000}s before retry...`);
+                await sleep(delay);
+                return await callGemini(payload, modelIndex, attempt + 1);
+            }
+            
+            // All retries exhausted on this model — try next fallback model if we have one
+            if (modelIndex < MODELS.length - 1) {
+                console.warn(`[AI] ${model} exhausted retries. Trying fallback: ${MODELS[modelIndex + 1]}`);
+                return await callGemini(payload, modelIndex + 1, 1);
+            }
+            
+            // All models exhausted
+            console.error(`[AI] All models rate-limited after retries.`);
+            return null;
+        }
 
         // We turn the response from Google back into a JavaScript object.
         const data = await response.json();
@@ -62,23 +97,26 @@ const callGemini = async (payload, model = MODELS.PRIMARY) => {
         // We use our helper function above to check if the data is valid or if the model is busy.
         const result = parseAIResponse(data);
 
-        // --- THE "PLAN B" LOGIC ---
-        // If the primary model told us it's busy (overloaded), AND we are currently using the primary model...
-        if (result.isOverloaded && model === MODELS.PRIMARY) {
-            console.warn(`Model ${model} overloaded. Trying fallback: ${MODELS.FALLBACK}`);
-            // We call this SAME function again (recursion), but this time we pass in the FALLBACK model!
-            return await callGemini(payload, MODELS.FALLBACK);
+        // --- THE "PLAN B" LOGIC (for non-429 overload errors) ---
+        if (result.isOverloaded && modelIndex < MODELS.length - 1) {
+            console.warn(`Model ${model} overloaded (non-429). Trying fallback: ${MODELS[modelIndex + 1]}`);
+            return await callGemini(payload, modelIndex + 1, 1);
         }
 
-        // If everything is fine, we return the list of questions (or null if it failed).
+        // If the AI returned an error and it's not just overloaded, log it!
+        if (result.error && !result.isOverloaded) {
+            console.error(`[AI Service Error] ${model}:`, result.error);
+        }
+
+        // If everything is fine, we return the parsed data (or null if it failed).
         return result.data || null;
     } catch (error) {
         // This catches internet connection errors or other "hard" failures.
-        console.error(`AI Error (${model}):`, error.message);
+        console.error(`[AI HARD ERROR] (${model}):`, error.message);
         
-        // Even if the internet hiccuped, if we were on the primary model, let's try one last time with the Lite one.
-        if (model === MODELS.PRIMARY) {
-            return await callGemini(payload, MODELS.FALLBACK);
+        // Even if the internet hiccuped, if we have more models, try the next one.
+        if (modelIndex < MODELS.length - 1) {
+            return await callGemini(payload, modelIndex + 1, 1);
         }
         return null;
     }
@@ -135,18 +173,26 @@ export const generateQuizFromFile = async (fileBase64, mimeType, count, difficul
 // This function is the "Art Director" of your app. 
 // It uses AI to analyze ANY series and generate a custom "Visual DNA" for it.
 export const generateSeriesAesthetic = async (seriesName) => {
-    const prompt = `Analyze the visual aesthetic of the series "${seriesName}". 
-    Think about its color palette, lighting, and mood.
+    const prompt = `You are a UI designer creating a mobile app theme inspired by "${seriesName}".
+    
+    CRITICAL: The theme MUST feel authentic to the series. Examples:
+    - "Stardew Valley" → warm earthy greens, soft browns, cozy light background (#F5ECD7), rounded corners, slow animations
+    - "Cyberpunk 2077" → neon magenta, electric cyan, pitch black background (#0A0A0A), sharp corners, fast animations
+    - "Naruto" → bold orange, deep blue, dark background (#111111), medium corners, energetic animations
+    - "The Witcher" → dark silver, blood red, near-black background (#0D0D0D), sharp corners, slow ominous animations
+    - "Animal Crossing" → pastel green, soft pink, warm cream background (#FFF8E7), very rounded corners, gentle animations
     
     Return ONLY a raw JSON object with these exact keys:
     {
-        "primaryColor": "A hex code representatve of the series (e.g. #FF0000)",
-        "secondaryColor": "A contrasting hex code",
-        "backgroundColor": "A dark background hex code (usually #000 to #111)",
-        "glowIntensity": 5 to 30 (integer),
+        "primaryColor": "The signature hex color of the series",
+        "secondaryColor": "A complementary accent hex color",
+        "backgroundColor": "A background hex that matches the series mood — dark for gritty/sci-fi, warm/light for cozy/wholesome",
+        "textColor": "Use #FFFFFF for dark backgrounds, #1A1A1A for light backgrounds",
+        "glowIntensity": 5 to 30 (integer — low for cozy series, high for neon/sci-fi),
         "shadowOpacity": 0.1 to 1.0 (float),
-        "animationSpeed": 100 to 800 (ms),
-        "borderRadius": 0 to 30 (px),
+        "animationSpeed": 100 to 800 (ms — fast for action, slow for peaceful),
+        "borderRadius": 0 to 30 (px — sharp for edgy, round for friendly),
+        "animationType": "One of: 'embers', 'snow', 'matrix', 'bubbles', 'stars', 'none' - based on the vibe of the series",
         "vibeDescription": "A 5-word summary of the look"
     }`;
 
@@ -209,29 +255,28 @@ export const extractDocumentText = async (fileBase64, mimeType) => {
             }]
         };
 
-        const response = await fetch(getApiUrl(MODELS.PRIMARY), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+        for (let i = 0; i < MODELS.length; i++) {
+            const model = MODELS[i];
+            const response = await fetch(getApiUrl(model), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-        const data = await response.json();
+            const data = await response.json();
 
-        if (data.error) {
-            // Try fallback model if primary is overloaded
-            if (data.error.code === 503 || data.error.code === 429) {
-                const fallbackResponse = await fetch(getApiUrl(MODELS.FALLBACK), {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const fallbackData = await fallbackResponse.json();
-                return fallbackData?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+            if (data.error) {
+                // Try next fallback model if this one is overloaded or rate limited
+                if (data.error.code === 503 || data.error.code === 429) {
+                    console.warn(`[AI] ${model} overloaded/rate-limited for text extraction. Moving to next.`);
+                    continue;
+                }
+                return null;
             }
-            return null;
-        }
 
-        return data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+            return data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+        }
+        return null;
     } catch (error) {
         console.error('Text extraction error:', error.message);
         return null;

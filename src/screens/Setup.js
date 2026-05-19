@@ -10,11 +10,12 @@ import {
     TouchableOpacity,    
     View,
     LayoutAnimation,
-    UIManager
+    UIManager,
+    ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../services/authService';
-import { updateFullProfile } from '../services/userService';
+import { updateFullProfile, checkUsernameAvailable, getFandomCache, saveFandomCache } from '../services/userService';
 import ImageColors from 'react-native-image-colors';
 import FandomSearch from '../components/FandomSearch';
 import { generateSeriesAesthetic, generateFandomRanks } from '../services/aiService';
@@ -49,13 +50,24 @@ export default function Setup() {
     };
 
     //logic 
-    const handleNext = async () => {//function to handle the "Next" button press in the character setup process. It validates the input for the current step and moves to the next step if the input is valid.
-        if (step === 1 && !name) {
-            Alert.alert("Hold on!", "You need to make yourseld known! Please enter a name for your character.");
-            return;
+    const handleNext = async () => {
+        if (step === 1) {
+            if (!name.trim()) {
+                Alert.alert("Hold on!", "You need to enter a name for your character.");
+                return;
+            }
+            // Check if the name is already taken by another player
+            const { available } = await checkUsernameAvailable(name.trim());
+            if (!available) {
+                Alert.alert(
+                    "Name Taken ⚔️",
+                    `"${name.trim()}" is already taken by another player. Choose a different name!`
+                );
+                return;
+            }
         }
         animateNextStep();
-        setStep(step + 1);// Move to the next step of the character setup process
+        setStep(step + 1);
     };
 
     const selectClass = (choice) => {
@@ -108,27 +120,60 @@ export default function Setup() {
                 animationSpeed: 300,
                 borderRadius: 15
             };
+            
+            let finalFandomRanks = null;
 
             try {
-                // Run both AI calls in parallel to save time
-                const [aesthetic, fandomRanks] = await Promise.all([
-                    generateSeriesAesthetic(fandomName),
-                    generateFandomRanks(fandomName, playerClass),
-                ]);
+                // 1. Check if another player has already forged this exact Fandom + Class combo!
+                const cachedDNA = await getFandomCache(fandomName, playerClass);
 
-                if (aesthetic) {
-                    visualConfig = aesthetic;
-                    primary = aesthetic.primaryColor || primary;
-                    secondary = aesthetic.secondaryColor || secondary;
-                    bg = aesthetic.backgroundColor || bg;
+                if (cachedDNA) {
+                    console.log('[CACHE] Fandom DNA found! Skipping AI generation.');
+                    primary = cachedDNA.primary_color;
+                    secondary = cachedDNA.secondary_color;
+                    bg = cachedDNA.background_color;
+                    visualConfig = cachedDNA.visual_config;
+                    
+                    // The cache returns JSON strings (or objects depending on Postgres type), so we parse if needed
+                    finalFandomRanks = typeof cachedDNA.fandom_ranks === 'string' 
+                        ? JSON.parse(cachedDNA.fandom_ranks) 
+                        : cachedDNA.fandom_ranks;
+                } else {
+                    console.log('[CACHE] No DNA found. Forging new DNA with AI...');
+                    
+                    // Run both AI calls in parallel to save time
+                    const [aesthetic, fandomRanks] = await Promise.all([
+                        generateSeriesAesthetic(fandomName),
+                        generateFandomRanks(fandomName, playerClass),
+                    ]);
+
+                    if (aesthetic) {
+                        visualConfig = aesthetic;
+                        primary = aesthetic.primaryColor || primary;
+                        secondary = aesthetic.secondaryColor || secondary;
+                        bg = aesthetic.backgroundColor || bg;
+                    }
+
+                    finalFandomRanks = fandomRanks;
+
+                    // Save the newly forged DNA to the global cache for future users!
+                    await saveFandomCache(
+                        fandomName, 
+                        playerClass, 
+                        primary, 
+                        secondary, 
+                        bg, 
+                        visualConfig, 
+                        fandomRanks ? JSON.stringify(fandomRanks) : null
+                    );
                 }
 
-                console.log('[RANKS] Generated ranks:', JSON.stringify(fandomRanks));
+                console.log('[RANKS] Final ranks:', JSON.stringify(finalFandomRanks));
 
-                // Save the rank hierarchy (as a JSON string) to be read by Home.js
-                if (fandomRanks && fandomRanks.length > 0) {
+                // Save the rank hierarchy to the individual user profile
+                if (finalFandomRanks && finalFandomRanks.length > 0) {
                     const rankSaveResult = await updateFullProfile(user.id, {
-                        fandom_ranks: JSON.stringify(fandomRanks)
+                        fandom_ranks: JSON.stringify(finalFandomRanks)
                     });
                     console.log('[RANKS] Save result:', JSON.stringify(rankSaveResult));
                 } else {
@@ -220,16 +265,26 @@ export default function Setup() {
                 {step === 3 && (
                     <View style={styles.card}>
                         <Text style={styles.headerText}>The Final Choice</Text>
-                        <Text style={styles.subtitleText}>Searching the database for {playerClass || 'Unknown'} titles...</Text>
                         
-                        {/*Search component that takes in the playerClass as a prop and returns a list of fandoms to choose from*/}
-                        <FandomSearch playerClass={playerClass} onSelect={handleFinish} />
+                        {loading ? (
+                            <View style={{ alignItems: 'center', marginVertical: 30 }}>
+                                <ActivityIndicator size="large" color={NEON_PINK} />
+                                <Text style={[styles.subtitleText, { marginTop: 15, color: NEON_PINK }]}>
+                                    Asking the AI to forge your Visual DNA...
+                                </Text>
+                            </View>
+                        ) : (
+                            <>
+                                <Text style={styles.subtitleText}>Searching the database for {playerClass || 'Unknown'} titles...</Text>
+                                
+                                {/*Search component that takes in the playerClass as a prop and returns a list of fandoms to choose from*/}
+                                <FandomSearch playerClass={playerClass} onSelect={handleFinish} />
 
-                        
-
-                        <TouchableOpacity onPress={() => { animateNextStep(); setStep(2); }} style={{marginTop: 20}}>
-                            <Text style={{color: 'gray', textAlign: 'center'}}>← Change Class</Text>
-                        </TouchableOpacity>
+                                <TouchableOpacity onPress={() => { animateNextStep(); setStep(2); }} style={{marginTop: 20}}>
+                                    <Text style={{color: 'gray', textAlign: 'center'}}>← Change Class</Text>
+                                </TouchableOpacity>
+                            </>
+                        )}
                     </View>
                 )}
 

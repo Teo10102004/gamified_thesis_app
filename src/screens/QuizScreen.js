@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext'; 
 import { saveQuizScore } from '../services/userService'; 
 import { getCurrentUser } from '../services/authService'; 
+import FandomBackground from '../components/FandomBackground'; 
 
 
 export default function QuizScreen({ navigation, route }) {
@@ -65,7 +66,8 @@ export default function QuizScreen({ navigation, route }) {
         };
         
         return (
-            <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+            <SafeAreaView style={styles.container}>
+                <FandomBackground />
                 <View style={styles.card}>
                     <Text style={[styles.headerText, { color: theme.textColor }]}>Quiz Complete!</Text>
                     <Text style={[styles.scoreText, { color: theme.primaryColor }]}>
@@ -99,7 +101,8 @@ export default function QuizScreen({ navigation, route }) {
 
     if (!currentQ) { //This is a safety check. If for some reason we don't have a current question to display (which shouldn't happen), we show a loading state instead of crashing the app.
         return (
-            <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor, justifyContent: 'center', alignItems: 'center' }]}>
+            <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <FandomBackground />
                 <ActivityIndicator size="large" color={theme.primaryColor} />
                 <Text style={{ color: theme.textColor, marginTop: 20, fontSize: 18 }}>
                     Preparing your quest...
@@ -109,7 +112,8 @@ export default function QuizScreen({ navigation, route }) {
     }
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+        <SafeAreaView style={styles.container}>
+            <FandomBackground />
             {/* We wrap everything in a ScrollView so that if the AI gives us 
                 really long questions, the user can just scroll down to read them 
                 instead of having the text overlap! */}

@@ -20,6 +20,7 @@ import ProfileSettings from './src/screens/ProfileSettings'; // The new Command 
 import LibraryDashboard from './src/screens/LibraryDashboard'; // Learning Sessions — Knowledge Vault
 import FolderView from './src/screens/FolderView';             // Learning Sessions — Folder contents
 import ReadingSession from './src/screens/ReadingSession';     // Learning Sessions — Active reading mode
+import CommunityFeed from './src/screens/CommunityFeed';       // Community — Leaderboard + Activity Feed
 
 
 const Stack = createNativeStackNavigator(); // Create a stack navigator for handling screen navigation
@@ -43,6 +44,7 @@ export default function App() {
             <Stack.Screen name="LibraryDashboard" component={LibraryDashboard} />
             <Stack.Screen name="FolderView" component={FolderView} />
             <Stack.Screen name="ReadingSession" component={ReadingSession} />
+            <Stack.Screen name="CommunityFeed" component={CommunityFeed} />
           </Stack.Navigator>
         </NavigationContainer>
       </ThemeProvider>

@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useTheme } from '../context/ThemeContext';
+import FandomBackground from '../components/FandomBackground';
 import { getCurrentUser } from '../services/authService';
 import {
     getUserFolders,
@@ -231,7 +232,8 @@ export default function LibraryDashboard({ navigation }) {
     );
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+        <SafeAreaView style={styles.container}>
+            <FandomBackground />
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -340,7 +342,7 @@ const styles = StyleSheet.create({
     card: {
         flexDirection: 'row', alignItems: 'center', padding: 15,
         borderRadius: 14, borderWidth: 1, marginBottom: 12,
-        backgroundColor: 'rgba(255,255,255,0.04)',
+        backgroundColor: '#0A0A0A',
         shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4
     },
     iconCircle: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginRight: 14 },

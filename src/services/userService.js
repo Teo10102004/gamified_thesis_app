@@ -1,5 +1,31 @@
 import { supabase } from './supabase';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// USERNAME UNIQUENESS CHECK
+// excludeUserId: pass the current user's ID when editing profile so their
+// own existing name doesn't falsely fail the check.
+// ─────────────────────────────────────────────────────────────────────────────
+export const checkUsernameAvailable = async (username, excludeUserId = null) => {
+    try {
+        let query = supabase
+            .from('User')
+            .select('userId')
+            .eq('userName', username.trim()); // case-sensitive — "Teo" and "teo" are different
+
+        if (excludeUserId) {
+            query = query.neq('userId', excludeUserId);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        return { available: data.length === 0 };
+    } catch (error) {
+        console.error('checkUsernameAvailable error:', error.message);
+        return { available: true }; // fail open — don't block the user on network errors
+    }
+};
+
 export const createUserProfile = async (userId, email) => { // Insert a new user profile into the 'User' table with the provided userId and email
     const { error } = await supabase
         .from('User')
@@ -38,6 +64,80 @@ export const updateFullProfile = async (userId, updates) => {
         console.error("Error updating profile:", error.message);
         throw error;
     }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FANDOM DNA CACHE SYSTEM
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getFandomCache = async (fandomName, playerClass) => {
+    try {
+        const { data, error } = await supabase
+            .from('fandom_cache')
+            .select('*')
+            .eq('fandom_name', fandomName)
+            .eq('player_class', playerClass)
+            .maybeSingle();
+
+        if (error) throw error;
+        return data; // Returns the cached object, or null if not found
+    } catch (error) {
+        console.error("Error fetching fandom cache:", error.message);
+        return null; 
+    }
+};
+
+export const saveFandomCache = async (fandomName, playerClass, primaryColor, secondaryColor, backgroundColor, visualConfig, fandomRanks) => {
+    // 1. Check if it already exists to decide whether to INSERT or UPDATE
+    const { data: existing } = await supabase
+        .from('fandom_cache')
+        .select('id')
+        .eq('fandom_name', fandomName)
+        .eq('player_class', playerClass)
+        .maybeSingle();
+
+    let result;
+    if (existing) {
+        // Update existing cache entry
+        result = await supabase
+            .from('fandom_cache')
+            .update({
+                primary_color: primaryColor,
+                secondary_color: secondaryColor,
+                background_color: backgroundColor,
+                visual_config: visualConfig,
+                fandom_ranks: fandomRanks
+            })
+            .eq('id', existing.id)
+            .select();
+    } else {
+        // Insert new cache entry
+        result = await supabase
+            .from('fandom_cache')
+            .insert({
+                fandom_name: fandomName,
+                player_class: playerClass,
+                primary_color: primaryColor,
+                secondary_color: secondaryColor,
+                background_color: backgroundColor,
+                visual_config: visualConfig,
+                fandom_ranks: fandomRanks
+            })
+            .select();
+    }
+
+    console.log("[CACHE] Save result data:", result.data);
+
+    if (result.error) {
+        console.error("Fandom cache save error details:", result.error);
+        throw result.error;
+    }
+    
+    if (!result.data || result.data.length === 0) {
+        throw new Error("Supabase accepted the request but returned 0 saved rows. This is usually caused by Row Level Security (RLS) silently blocking the INSERT.");
+    }
+
+    return true;
 };
 
 /**
@@ -103,13 +203,14 @@ export const uploadAvatar = async (userId, fileUri) => {
 
 // This function creates a brand new "Quest" (Quiz) record in your database.
 // We call this right after the AI finishes generating the questions.
-export const createNewQuiz = async (title, description = "") => {
+export const createNewQuiz = async (userId, title, description = "") => {
     try {
         // We insert a new row into the 'quiz' table.
         // We don't need to provide 'quizid' because your database creates it automatically (Serial).
         const { data, error } = await supabase
             .from('quiz')
             .insert([{
+                userid: userId, // Link the quiz to the user who created it
                 title: title,
                 description: description,
                 basexp: 100, // We set a default base XP for this quiz
@@ -204,10 +305,11 @@ export const fetchUserTotalXP = async (userId) => {
 // which avoids "Relationship Not Found" errors if Foreign Keys aren't set up in Supabase.
 export const getUserQuizzes = async (userId) => {
     try {
-        // Step 1: Fetch all the quizzes from the 'quiz' table
+        // Step 1: Fetch all the quizzes created by THIS user from the 'quiz' table
         const { data: quizzes, error: quizError } = await supabase
             .from('quiz')
             .select('*')
+            .eq('userid', userId) // <-- THE FIX: Only fetch their own quizzes
             .order('quizid', { ascending: false });
 
         if (quizError) throw quizError;
@@ -748,5 +850,160 @@ export const fetchUserTotalXPWithReading = async (userId) => {
     } catch (error) {
         console.error('Error fetching total XP:', error.message);
         return { success: false, totalXP: 0, currentLevel: 1, currentLevelXP: 0 };
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMUNITY — LEADERBOARD
+// Fetches all users and computes their total XP (quiz + reading) to rank them.
+// ─────────────────────────────────────────────────────────────────────────────
+export const getLeaderboard = async () => {
+    try {
+        // 1. All public profiles
+        const { data: users, error: usersError } = await supabase
+            .from('User')
+            .select('userId, userName, avatarUrl, fandomName, fandom_ranks, playerClass');
+        if (usersError) throw usersError;
+
+        // 2. All quiz scores — we'll compute max per quiz per user in JS
+        const { data: quizScores } = await supabase
+            .from('userquizscore')
+            .select('userid, quizid, xpreward');
+
+        // 3. All reading XP
+        const { data: readingScores } = await supabase
+            .from('reading_session')
+            .select('userid, xp_earned');
+
+        // Build quiz XP map: max per (userid, quizid)
+        const quizMap = {};
+        (quizScores || []).forEach(row => {
+            if (!quizMap[row.userid]) quizMap[row.userid] = {};
+            const prev = quizMap[row.userid][row.quizid] || 0;
+            quizMap[row.userid][row.quizid] = Math.max(prev, row.xpreward || 0);
+        });
+        const quizTotal = {};
+        Object.entries(quizMap).forEach(([uid, quizzes]) => {
+            quizTotal[uid] = Object.values(quizzes).reduce((a, b) => a + b, 0);
+        });
+
+        // Build reading XP map
+        const readingTotal = {};
+        (readingScores || []).forEach(row => {
+            readingTotal[row.userid] = (readingTotal[row.userid] || 0) + (row.xp_earned || 0);
+        });
+
+        // Assemble leaderboard entries
+        const leaderboard = (users || []).map(user => {
+            const totalXP = (quizTotal[user.userId] || 0) + (readingTotal[user.userId] || 0);
+            const level = Math.floor(totalXP / 500) + 1;
+
+            let rankTitle = user.playerClass || 'Explorer';
+            try {
+                const ranks = user.fandom_ranks ? JSON.parse(user.fandom_ranks) : null;
+                if (ranks && ranks.length > 0) {
+                    const rankIndex = Math.min(level - 1, ranks.length - 1);
+                    rankTitle = ranks[rankIndex];
+                }
+            } catch (_) {}
+
+            return {
+                userId: user.userId,
+                userName: user.userName || 'Unknown',
+                avatarUrl: user.avatarUrl || null,
+                fandomName: user.fandomName || '',
+                totalXP,
+                level,
+                rankTitle,
+            };
+        });
+
+        leaderboard.sort((a, b) => b.totalXP - a.totalXP);
+        return { success: true, leaderboard };
+    } catch (error) {
+        console.error('getLeaderboard error:', error.message);
+        return { success: false, leaderboard: [] };
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMUNITY — ACTIVITY FEED
+// Merges recent quiz completions and reading sessions into a single feed.
+// ─────────────────────────────────────────────────────────────────────────────
+export const getRecentActivity = async () => {
+    try {
+        // Recent quiz scores
+        const { data: quizActivity } = await supabase
+            .from('userquizscore')
+            .select('userid, quizid, attemptno, score, xpreward, date')
+            .order('date', { ascending: false })
+            .limit(20);
+
+        // Recent reading sessions
+        const { data: readingActivity } = await supabase
+            .from('reading_session')
+            .select('userid, xp_earned, duration_seconds, session_date, created_at')
+            .order('created_at', { ascending: false })
+            .limit(20);
+
+        // Collect all involved user IDs
+        const userIds = new Set([
+            ...(quizActivity || []).map(q => q.userid),
+            ...(readingActivity || []).map(r => r.userid),
+        ]);
+
+        if (userIds.size === 0) return { success: true, activities: [] };
+
+        // Fetch their profiles
+        const { data: users } = await supabase
+            .from('User')
+            .select('userId, userName, avatarUrl, fandomName')
+            .in('userId', Array.from(userIds));
+
+        const userMap = {};
+        (users || []).forEach(u => { userMap[u.userId] = u; });
+
+        const activities = [];
+
+        // Map quiz events
+        (quizActivity || []).forEach(item => {
+            const user = userMap[item.userid];
+            if (!user || !item.xpreward) return;
+            activities.push({
+                id: `quiz-${item.userid}-${item.quizid}-${item.attemptno ?? Math.random()}`,
+                type: 'quiz',
+                userName: user.userName || 'Unknown',
+                avatarUrl: user.avatarUrl || null,
+                fandomName: user.fandomName || '',
+                xp: item.xpreward,
+                score: Math.round((item.score || 0) * 100),
+                timestamp: new Date(item.date).getTime() || 0,
+                dateLabel: item.date,
+            });
+        });
+
+        // Map reading events
+        (readingActivity || []).forEach(item => {
+            const user = userMap[item.userid];
+            if (!user || !item.xp_earned) return;
+            const mins = Math.round((item.duration_seconds || 0) / 60);
+            activities.push({
+                id: `read-${item.userid}-${item.created_at}`,
+                type: 'reading',
+                userName: user.userName || 'Unknown',
+                avatarUrl: user.avatarUrl || null,
+                fandomName: user.fandomName || '',
+                xp: item.xp_earned,
+                durationMins: mins,
+                timestamp: new Date(item.created_at || item.session_date).getTime() || 0,
+                dateLabel: item.session_date,
+            });
+        });
+
+        activities.sort((a, b) => b.timestamp - a.timestamp);
+        return { success: true, activities: activities.slice(0, 30) };
+    } catch (error) {
+        console.error('getRecentActivity error:', error.message);
+        return { success: false, activities: [] };
     }
 };

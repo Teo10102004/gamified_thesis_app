@@ -39,7 +39,10 @@ export const getCurrentUser = async () => { // Use the getUser method from Supab
     const {data, error} = await supabase.auth.getUser();
 
     if(error){
-        console.error('Error fetching current user:', error);
+        // Don't throw a scary red error if the user just isn't logged in yet
+        if (!error.message.includes('Auth session missing')) {
+            console.error('Error fetching current user:', error);
+        }
         return null; // Return null if there was an error fetching the user information
     }
 

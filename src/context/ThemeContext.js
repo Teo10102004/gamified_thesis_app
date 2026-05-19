@@ -4,6 +4,27 @@ import { getCurrentUser } from '../services/authService'; // Adjust path if need
 
 const ThemeContext = createContext();
 
+// Helper: determine if text should be white or dark based on background brightness
+const getTextColorForBackground = (bgColor) => {
+    // Since we now apply a global dark cinematic overlay (rgba(0,0,0,0.75)) 
+    // across all screens via FandomBackground, all text MUST be white 
+    // to remain legible, regardless of the underlying AI background color.
+    return '#FFFFFF';
+};
+
+// Helper: Ensure the AI doesn't generate massive values that break the UI layout
+const clampVisualConfig = (config) => {
+    if (!config) return null;
+    return {
+        ...config,
+        // Cap glow/shadow radius and elevation so it doesn't push margins and overlap elements
+        glowIntensity: Math.min(Math.max(config.glowIntensity || 10, 0), 15),
+        // Cap border radius so it doesn't turn squares into perfect circles unintentionally
+        borderRadius: Math.min(Math.max(config.borderRadius || 15, 0), 30),
+        shadowOpacity: Math.min(Math.max(config.shadowOpacity || 0.5, 0), 1),
+    };
+};
+
 export const ThemeProvider = ({ children }) => {
     // 1. Start with the defaults just in case
     const [theme, setTheme] = useState({
@@ -17,7 +38,8 @@ export const ThemeProvider = ({ children }) => {
             glowIntensity: 10,
             shadowOpacity: 0.5,
             animationSpeed: 300,
-            borderRadius: 15
+            borderRadius: 15,
+            animationType: 'none'
         }
     });
 
@@ -60,13 +82,14 @@ export const ThemeProvider = ({ children }) => {
                     primaryColor: data.primaryColor || '#FF00FF',
                     secondaryColor: data.secondaryColor || '#00FFFF',
                     backgroundColor: data.backgroundColor || '#000000',
-                    textColor: '#FFFFFF',
+                    textColor: getTextColorForBackground(data.backgroundColor),
                     fandomName: data.fandomName || 'Unknown',
-                    visualConfig: data.visualConfig || {
+                    visualConfig: clampVisualConfig(data.visualConfig) || {
                         glowIntensity: 10,
                         shadowOpacity: 0.5,
                         animationSpeed: 300,
-                        borderRadius: 15
+                        borderRadius: 15,
+                        animationType: 'none'
                     }
                 });
             }
@@ -77,11 +100,17 @@ export const ThemeProvider = ({ children }) => {
 
     // Allows components to update the theme (like after a new setup)
     const updateTheme = (newConfig) => {
-        setTheme((prevTheme) => ({
-            ...prevTheme,
-            ...newConfig,
-            // If the newConfig has visualConfig, it will overwrite the old one
-        }));
+        setTheme((prevTheme) => {
+            const merged = { ...prevTheme, ...newConfig };
+            // Auto-compute textColor whenever backgroundColor changes
+            if (newConfig.backgroundColor) {
+                merged.textColor = getTextColorForBackground(newConfig.backgroundColor);
+            }
+            if (newConfig.visualConfig) {
+                merged.visualConfig = clampVisualConfig(newConfig.visualConfig);
+            }
+            return merged;
+        });
     };
 
     return (

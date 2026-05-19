@@ -1,11 +1,13 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Alert, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native'; // Refreshes the list when we come back
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { getCurrentUser } from '../services/authService';
 import { getUserQuizzes, deleteQuiz, fetchQuizQuestions } from '../services/userService';
+import FandomBackground from '../components/FandomBackground';
+
 
 export default function QuizDashboard({ navigation }) {
     // We pull our dynamic fandom colors from the context
@@ -69,7 +71,7 @@ export default function QuizDashboard({ navigation }) {
             styles.quizCard, 
             { 
                 borderColor: theme.secondaryColor, 
-                backgroundColor: 'rgba(255,255,255,0.05)',
+                backgroundColor: '#0A0A0A',
                 // --- AI VISUAL DNA ---
                 // Apply dynamic border radius and shadow effects based on the theme's visual configuration
                 borderRadius: theme.visualConfig?.borderRadius || 15,
@@ -102,7 +104,7 @@ export default function QuizDashboard({ navigation }) {
                     <Ionicons name="journal" size={24} color="#FFF" />
                 </View>
                 <View style={styles.textContainer}>
-                    <Text style={[styles.quizTitle, { color: theme.textColor }]}>{item.title}</Text>
+                    <Text style={[styles.quizTitle, { color: theme.textColor }]} numberOfLines={2}>{item.title}</Text>
                     <Text style={[styles.quizStats, { color: 'gray' }]}>Personal Best: {item.bestScore} XP</Text>
                 </View>
             </TouchableOpacity>
@@ -114,7 +116,8 @@ export default function QuizDashboard({ navigation }) {
     );
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+        <SafeAreaView style={styles.container}>
+            <FandomBackground />
 
             {/* Header Section */}
             <View style={styles.header}>
