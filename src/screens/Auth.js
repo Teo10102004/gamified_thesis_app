@@ -42,9 +42,14 @@ export default function Auth({ navigation }) {
                 //check if the user has a profile in the database, if not, route them to the setup screen
                 const { data: profile, error } = await supabase
                     .from('User')
-                    .select('userName')
+                    .select('userName, is_banned')
                     .eq('userId', userId)
                     .single();
+
+                if (profile?.is_banned) {
+                    await supabase.auth.signOut();
+                    throw new Error("Your account has been banned. Please contact support.");
+                }
 
                 if(profile && profile.userName){
                     Alert.alert('Welcome Back!', `Welcome back to the Gamified Learning App, ${profile.userName}!`); // Show a welcome back alert with the user's name if the profile exists

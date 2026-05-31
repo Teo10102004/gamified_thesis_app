@@ -1,17 +1,17 @@
 import React, { useState, useCallback } from 'react';
 import {
     View, Text, StyleSheet, TouchableOpacity, FlatList,
-    Image, ActivityIndicator, RefreshControl, Animated,
+    Image, ActivityIndicator, RefreshControl, Animated, Alert, Modal, ScrollView
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import FandomBackground from '../components/FandomBackground';
-import { getLeaderboard, getRecentActivity } from '../services/userService';
+import { getLeaderboard, getRecentActivity, getPublicQuizzes, cloneQuizToLibrary, likeQuiz } from '../services/userService';
 import { getCurrentUser } from '../services/authService';
 
-const TABS = ['🏆 Leaderboard', '⚡ Activity'];
+const TABS = ['🏆 Leaderboard', '⚡ Activity', '🌍 Public Quests'];
 
 const MEDALS = ['🥇', '🥈', '🥉'];
 
@@ -119,6 +119,33 @@ const ActivityCard = ({ item, primaryColor, secondaryColor }) => {
     );
 };
 
+const PublicQuestCard = ({ item, primaryColor, secondaryColor, onClone, onPress }) => {
+    const description = item.public_description || "A community generated quest.";
+    
+    return (
+        <TouchableOpacity style={styles.actCard} onPress={() => onPress(item)}>
+            <View style={[styles.actInfo, { flex: 1, marginRight: 10 }]}>
+                <Text style={styles.actName} numberOfLines={1}>
+                    <Text style={{ color: '#FFF', fontWeight: '700' }}>{item.title}</Text>
+                </Text>
+                <Text style={{ color: 'gray', fontSize: 12, marginTop: 4, fontStyle: 'italic' }} numberOfLines={2}>
+                    "{description}"
+                </Text>
+                <Text style={{ color: primaryColor, fontSize: 11, marginTop: 4, fontWeight: 'bold' }}>
+                    By {item.creator?.userName || 'Unknown'} • {item.max_xp} Max XP
+                </Text>
+            </View>
+            <TouchableOpacity 
+                style={[styles.actXPBadge, { backgroundColor: primaryColor, borderColor: primaryColor, paddingHorizontal: 12, paddingVertical: 8 }]}
+                onPress={() => onClone(item.quizid)}
+            >
+                <Ionicons name="add-circle" size={16} color="#FFF" />
+                <Text style={[styles.actXPText, { color: '#FFF' }]}>Add</Text>
+            </TouchableOpacity>
+        </TouchableOpacity>
+    );
+};
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function CommunityFeed({ navigation }) {
@@ -128,10 +155,14 @@ export default function CommunityFeed({ navigation }) {
     const [activeTab, setActiveTab] = useState(0);
     const [leaderboard, setLeaderboard] = useState([]);
     const [activities, setActivities] = useState([]);
+    const [publicQuests, setPublicQuests] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [currentUserId, setCurrentUserId] = useState(null);
     const [myRank, setMyRank] = useState(null);
+    
+    const [selectedQuest, setSelectedQuest] = useState(null);
+    const [isLiking, setIsLiking] = useState(false);
 
     const loadData = async (silent = false) => {
         if (!silent) setLoading(true);
@@ -139,9 +170,10 @@ export default function CommunityFeed({ navigation }) {
             const user = await getCurrentUser();
             if (user) setCurrentUserId(user.id);
 
-            const [lbResult, actResult] = await Promise.all([
+            const [lbResult, actResult, publicResult] = await Promise.all([
                 getLeaderboard(),
-                getRecentActivity(),
+                getRecentActivity(user?.id),
+                getPublicQuizzes(user?.id)
             ]);
 
             if (lbResult.success) {
@@ -152,6 +184,7 @@ export default function CommunityFeed({ navigation }) {
                 }
             }
             if (actResult.success) setActivities(actResult.activities);
+            if (publicResult.success) setPublicQuests(publicResult.quizzes);
         } catch (e) {
             console.error('Community load error:', e.message);
         } finally {
@@ -165,6 +198,48 @@ export default function CommunityFeed({ navigation }) {
     const onRefresh = () => {
         setRefreshing(true);
         loadData(true);
+    };
+
+    const handleClone = async (quizId) => {
+        if (!currentUserId) return;
+        Alert.alert(
+            "Add to Library",
+            "This will clone this quest into your personal library. Proceed?",
+            [
+                { text: "Cancel", style: "cancel" },
+                { text: "Add", onPress: async () => {
+                    const result = await cloneQuizToLibrary(quizId, currentUserId);
+                    if (result.success) {
+                        Alert.alert("Success", "Quest added to your library!");
+                        if (selectedQuest) setSelectedQuest(null);
+                    } else {
+                        Alert.alert("Error", result.message || "Could not clone quest.");
+                    }
+                }}
+            ]
+        );
+    };
+
+    const handleLike = async () => {
+        if (!selectedQuest || isLiking) return;
+        setIsLiking(true);
+        const result = await likeQuiz(selectedQuest.quizid, currentUserId);
+        setIsLiking(false);
+        
+        if (result.success) {
+            // Update local state to reflect the new like immediately
+            const updatedQuest = { 
+                ...selectedQuest, 
+                likes: result.newLikes,
+                liked_by: [...(selectedQuest.liked_by || []), currentUserId] 
+            };
+            setSelectedQuest(updatedQuest);
+            setPublicQuests(prev => prev.map(q => q.quizid === updatedQuest.quizid ? updatedQuest : q));
+        } else if (result.message === "Already liked") {
+            Alert.alert("Already Liked", "You've already liked this quest!");
+        } else {
+            Alert.alert("Error", "Could not like this quest right now.");
+        }
     };
 
     // ── Render ─────────────────────────────────────────────────────────────
@@ -193,23 +268,29 @@ export default function CommunityFeed({ navigation }) {
 
             {/* Tab Bar */}
             <View style={[styles.tabBar, { borderBottomColor: primaryColor + '33' }]}>
-                {TABS.map((tab, idx) => (
-                    <TouchableOpacity
-                        key={idx}
-                        style={[
-                            styles.tab,
-                            activeTab === idx && { borderBottomColor: primaryColor, borderBottomWidth: 2.5 }
-                        ]}
-                        onPress={() => setActiveTab(idx)}
-                    >
-                        <Text style={[
-                            styles.tabText,
-                            { color: activeTab === idx ? primaryColor : 'gray' }
-                        ]}>
-                            {tab}
-                        </Text>
-                    </TouchableOpacity>
-                ))}
+                {['Leaderboard', 'Activity', 'Public Quests'].map((tabName, idx) => {
+                    const defaultEmojis = ['🏆', '⚡', '🌍'];
+                    const emojis = theme.visualConfig?.tabEmojis || defaultEmojis;
+                    const emoji = emojis[idx] || defaultEmojis[idx];
+                    
+                    return (
+                        <TouchableOpacity
+                            key={idx}
+                            style={[
+                                styles.tab,
+                                activeTab === idx && { borderBottomWidth: 3, borderBottomColor: primaryColor }
+                            ]}
+                            onPress={() => setActiveTab(idx)}
+                        >
+                            <Text style={[
+                                styles.tabText,
+                                { color: activeTab === idx ? primaryColor : 'gray' }
+                            ]}>
+                                {emoji} {tabName}
+                            </Text>
+                        </TouchableOpacity>
+                    );
+                })}
             </View>
 
             {/* Content */}
@@ -248,7 +329,7 @@ export default function CommunityFeed({ navigation }) {
                         ) : null
                     }
                 />
-            ) : (
+            ) : activeTab === 1 ? (
                 /* ── ACTIVITY FEED TAB ── */
                 <FlatList
                     data={activities}
@@ -276,7 +357,110 @@ export default function CommunityFeed({ navigation }) {
                         ) : null
                     }
                 />
+            ) : (
+                /* ── PUBLIC QUESTS TAB ── */
+                <FlatList
+                    data={publicQuests}
+                    keyExtractor={(item) => item.quizid.toString()}
+                    renderItem={({ item }) => (
+                        <PublicQuestCard
+                            item={item}
+                            primaryColor={primaryColor}
+                            secondaryColor={secondaryColor}
+                            onClone={handleClone}
+                            onPress={setSelectedQuest}
+                        />
+                    )}
+                    contentContainerStyle={styles.list}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={primaryColor} />}
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Ionicons name="globe-outline" size={70} color="rgba(255,255,255,0.12)" />
+                            <Text style={styles.emptyText}>No public quests yet.{'\n'}Share yours from the Quest Library!</Text>
+                        </View>
+                    }
+                    ListHeaderComponent={
+                        publicQuests.length > 0 ? (
+                            <Text style={[styles.sectionLabel, { color: primaryColor }]}>
+                                Community Library
+                            </Text>
+                        ) : null
+                    }
+                />
             )}
+
+            {/* --- QUEST DETAILS MODAL --- */}
+            <Modal
+                visible={!!selectedQuest}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => setSelectedQuest(null)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { borderColor: primaryColor }]}>
+                        {selectedQuest && (
+                            <>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>{selectedQuest.title}</Text>
+                                    <TouchableOpacity onPress={() => setSelectedQuest(null)}>
+                                        <Ionicons name="close-circle" size={28} color="gray" />
+                                    </TouchableOpacity>
+                                </View>
+                                
+                                <Text style={styles.modalCreator}>
+                                    Created by: <Text style={{ color: primaryColor }}>{selectedQuest.creator?.userName || 'Unknown'}</Text>
+                                </Text>
+                                
+                                <ScrollView style={styles.modalDescScroll}>
+                                    <Text style={styles.modalDescription}>
+                                        {selectedQuest.public_description || "A community generated quest. Jump in and test your knowledge!"}
+                                    </Text>
+                                </ScrollView>
+                                
+                                <View style={styles.modalStats}>
+                                    <View style={styles.modalStatBox}>
+                                        <Ionicons name="star" size={20} color="#FFD700" />
+                                        <Text style={styles.modalStatText}>{selectedQuest.max_xp} Max XP</Text>
+                                    </View>
+                                    <View style={styles.modalStatBox}>
+                                        <Ionicons name="heart" size={20} color="#FF4444" />
+                                        <Text style={styles.modalStatText}>{selectedQuest.likes || 0} Likes</Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.modalActions}>
+                                    <TouchableOpacity 
+                                        style={[
+                                            styles.modalBtn, 
+                                            styles.modalLikeBtn, 
+                                            (selectedQuest.liked_by || []).includes(currentUserId) && { backgroundColor: '#FF4444' }
+                                        ]}
+                                        onPress={handleLike}
+                                        disabled={isLiking || (selectedQuest.liked_by || []).includes(currentUserId)}
+                                    >
+                                        <Ionicons 
+                                            name={(selectedQuest.liked_by || []).includes(currentUserId) ? "heart" : "heart-outline"} 
+                                            size={20} 
+                                            color="#FFF" 
+                                        />
+                                        <Text style={styles.modalBtnText}>
+                                            {(selectedQuest.liked_by || []).includes(currentUserId) ? "Liked" : "Like"}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    
+                                    <TouchableOpacity 
+                                        style={[styles.modalBtn, { backgroundColor: primaryColor, flex: 2 }]}
+                                        onPress={() => handleClone(selectedQuest.quizid)}
+                                    >
+                                        <Ionicons name="add-circle" size={20} color="#FFF" />
+                                        <Text style={styles.modalBtnText}>Add to Library</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </>
+                        )}
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -355,7 +539,25 @@ const styles = StyleSheet.create({
     actXPText: { fontSize: 12, fontWeight: '800' },
     actTime: { fontSize: 10, color: 'gray' },
 
-    // Empty
     emptyContainer: { alignItems: 'center', marginTop: 80 },
     emptyText: { color: 'gray', fontSize: 15, textAlign: 'center', marginTop: 20, lineHeight: 24 },
+
+    // Modal
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
+    modalContent: {
+        backgroundColor: '#111', borderTopWidth: 2, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+        padding: 24, maxHeight: '80%',
+    },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+    modalTitle: { fontSize: 22, fontWeight: '900', color: '#FFF', flex: 1, marginRight: 16 },
+    modalCreator: { fontSize: 14, color: 'gray', marginBottom: 16, fontWeight: '600' },
+    modalDescScroll: { maxHeight: 150, marginBottom: 20 },
+    modalDescription: { fontSize: 16, color: '#DDD', lineHeight: 24, fontStyle: 'italic' },
+    modalStats: { flexDirection: 'row', gap: 16, marginBottom: 24, paddingVertical: 16, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#333' },
+    modalStatBox: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    modalStatText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+    modalActions: { flexDirection: 'row', gap: 12, marginBottom: 20 },
+    modalBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: 12, flex: 1 },
+    modalLikeBtn: { backgroundColor: 'rgba(255, 68, 68, 0.2)', borderWidth: 1, borderColor: '#FF4444' },
+    modalBtnText: { color: '#FFF', fontSize: 16, fontWeight: '800' }
 });

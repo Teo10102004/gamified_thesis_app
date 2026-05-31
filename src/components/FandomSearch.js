@@ -40,7 +40,7 @@ export default function FandomSearch({ playerClass, onSelect }) {
         <View style={styles.container}>
             <TextInput
                 style={styles.searchInput}
-                placeholder={`Search for an anime title...`}
+                placeholder={`Search for ${playerClass === 'Gamer' ? 'a game' : playerClass === 'Cinephile' ? 'a movie' : 'an anime'} title...`}
                 placeholderTextColor="rgba(255, 255, 255, 0.5)"
                 value={query}
                 onChangeText={(text) => setQuery(text)} // Now it just updates the text, the useEffect handles the API!

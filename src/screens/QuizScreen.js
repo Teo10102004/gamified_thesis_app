@@ -20,19 +20,34 @@ export default function QuizScreen({ navigation, route }) {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [correctAnswers, setCorrectAnswers] = useState(0);
     const [isFinished, setIsFinished] = useState(false); 
+    const [selectedAnswerIndex, setSelectedAnswerIndex] = useState(null);
+    const [isCorrect, setIsCorrect] = useState(null);
 
     // Gameplay logic
     const handleAnswerPress = (selectedIndex) => {
-        if (selectedIndex === dynamicQuestions[currentIndex].correctIndex) {
+        // Prevent multiple taps while waiting
+        if (selectedAnswerIndex !== null) return;
+
+        const correct = selectedIndex === dynamicQuestions[currentIndex].correctIndex;
+        setSelectedAnswerIndex(selectedIndex);
+        setIsCorrect(correct);
+
+        if (correct) {
             setCorrectAnswers(correctAnswers + 1); 
         }
 
-        // Move to the next question or finish the quiz
-        if (currentIndex < dynamicQuestions.length - 1) {
-            setCurrentIndex(currentIndex + 1);
-        } else {
-            setIsFinished(true);
-        }
+        // Wait a moment to show feedback before moving on
+        setTimeout(() => {
+            setSelectedAnswerIndex(null);
+            setIsCorrect(null);
+            
+            // Move to the next question or finish the quiz
+            if (currentIndex < dynamicQuestions.length - 1) {
+                setCurrentIndex(currentIndex + 1);
+            } else {
+                setIsFinished(true);
+            }
+        }, 1000); // 1 second delay
     };
 
     // --- RENDER RESULTS SCREEN ---
@@ -132,17 +147,28 @@ export default function QuizScreen({ navigation, route }) {
                 </View>
 
                 <View style={styles.optionsContainer}>
-                    {currentQ.options.map((option, index) => (
-                        <TouchableOpacity
-                            key={index}
-                            style={[styles.optionButton, { borderColor: theme.primaryColor }]}
-                            onPress={() => handleAnswerPress(index)}
-                        >
-                            <Text style={[styles.optionText, { color: theme.textColor }]}>
-                                {option}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
+                    {currentQ.options.map((option, index) => {
+                        let borderColor = theme.primaryColor;
+                        let backgroundColor = 'rgba(255,255,255,0.05)';
+                        
+                        if (selectedAnswerIndex === index) {
+                            borderColor = isCorrect ? '#4ADE80' : '#F87171'; // Soft Green if correct, Soft Red if wrong
+                            backgroundColor = isCorrect ? 'rgba(74, 222, 128, 0.2)' : 'rgba(248, 113, 113, 0.2)';
+                        }
+
+                        return (
+                            <TouchableOpacity
+                                key={index}
+                                style={[styles.optionButton, { borderColor, backgroundColor }]}
+                                onPress={() => handleAnswerPress(index)}
+                                disabled={selectedAnswerIndex !== null}
+                            >
+                                <Text style={[styles.optionText, { color: theme.textColor }]}>
+                                    {option}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </View>
 
             </ScrollView>

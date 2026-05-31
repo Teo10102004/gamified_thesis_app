@@ -203,20 +203,19 @@ export const uploadAvatar = async (userId, fileUri) => {
 
 // This function creates a brand new "Quest" (Quiz) record in your database.
 // We call this right after the AI finishes generating the questions.
-export const createNewQuiz = async (userId, title, description = "") => {
+export const createNewQuiz = async (userId, title, description = "", maxXP = 150) => {
     try {
-        // We insert a new row into the 'quiz' table.
-        // We don't need to provide 'quizid' because your database creates it automatically (Serial).
         const { data, error } = await supabase
             .from('quiz')
             .insert([{
-                userid: userId, // Link the quiz to the user who created it
+                userid: userId,
                 title: title,
                 description: description,
-                basexp: 100, // We set a default base XP for this quiz
+                basexp: 100, 
+                max_xp: maxXP,
                 ispublic: false
             }])
-            .select(); // .select() tells Supabase to send back the row it just created so we can get the new ID!
+            .select();
 
         if (error) throw error;
 
@@ -252,10 +251,68 @@ export const saveQuizScore = async (userId, quizId, score, earnedXP) => {
 
         if (insertError) throw insertError;
 
+        // Update streak
+        await updateUserStreak(userId);
+
         return { success: true };
 
     } catch (error) {
         console.error("Error saving score to database:", error.message);
+        return { success: false, error };
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STREAK TRACKING
+// ─────────────────────────────────────────────────────────────────────────────
+export const updateUserStreak = async (userId) => {
+    try {
+        const { data: user, error: fetchError } = await supabase
+            .from('User')
+            .select('streak_count, last_active_date')
+            .eq('userId', userId)
+            .single();
+
+        if (fetchError) throw fetchError;
+
+        const today = new Date().toISOString().split('T')[0];
+        const lastActive = user.last_active_date;
+        
+        let newStreak = user.streak_count || 0;
+
+        if (!lastActive) {
+            // First time ever
+            newStreak = 1;
+        } else if (lastActive === today) {
+            // Already active today, do nothing
+            return { success: true, streak_count: newStreak };
+        } else {
+            // Check if last active was yesterday
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yesterdayString = yesterday.toISOString().split('T')[0];
+
+            if (lastActive === yesterdayString) {
+                newStreak += 1;
+            } else {
+                // Streak broken
+                newStreak = 1;
+            }
+        }
+
+        const { error: updateError } = await supabase
+            .from('User')
+            .update({
+                streak_count: newStreak,
+                last_active_date: today
+            })
+            .eq('userId', userId);
+
+        if (updateError) throw updateError;
+
+        return { success: true, streak_count: newStreak };
+    } catch (error) {
+        console.error("Error updating streak:", error.message);
         return { success: false, error };
     }
 };
@@ -310,6 +367,7 @@ export const getUserQuizzes = async (userId) => {
             .from('quiz')
             .select('*')
             .eq('userid', userId) // <-- THE FIX: Only fetch their own quizzes
+            .neq('is_deleted', true) // Hide soft-deleted quizzes
             .order('quizid', { ascending: false });
 
         if (quizError) throw quizError;
@@ -351,10 +409,10 @@ export const getUserQuizzes = async (userId) => {
 // This function removes a quiz from the database.
 export const deleteQuiz = async (quizId) => {
     try {
-        // We simply tell Supabase to delete the row where the quizid matches.
+        // Soft-delete the quiz so it vanishes from the user's library but preserves their XP history and prevents XP farming
         const { error } = await supabase
             .from('quiz')
-            .delete()
+            .update({ is_deleted: true })
             .eq('quizid', quizId);
 
         if (error) throw error;
@@ -362,6 +420,270 @@ export const deleteQuiz = async (quizId) => {
     } catch (error) {
         console.error("Error deleting quiz:", error.message);
         return { success: false, error };
+    }
+};
+
+// --- ANTI-CHEAT ---
+
+export const checkDocumentUsed = async (userId, exactDescription) => {
+    try {
+        const { data, error } = await supabase
+            .from('quiz')
+            .select('quizid, is_deleted')
+            .eq('userid', userId)
+            .eq('description', exactDescription);
+            
+        if (error) throw error;
+        if (data && data.length > 0) {
+            return { used: true, quizId: data[0].quizid, isDeleted: data[0].is_deleted };
+        }
+        return { used: false };
+    } catch (e) {
+        console.error("Error checking document anti-cheat:", e.message);
+        return { used: false };
+    }
+};
+
+export const restoreDeletedQuiz = async (quizId) => {
+    try {
+        const { error } = await supabase
+            .from('quiz')
+            .update({ is_deleted: false })
+            .eq('quizid', quizId);
+        if (error) throw error;
+        return { success: true };
+    } catch (error) {
+        console.error("Error restoring quiz:", error.message);
+        return { success: false };
+    }
+};
+
+// --- PUBLIC QUIZZES & DISCOVERY ---
+
+export const toggleQuizPublic = async (quizId, isPublic, publicDescription = null) => {
+    try {
+        const updateData = { ispublic: isPublic };
+        if (publicDescription) {
+            updateData.public_description = publicDescription;
+        }
+
+        const { error } = await supabase
+            .from('quiz')
+            .update(updateData)
+            .eq('quizid', quizId);
+
+        if (error) throw error;
+        return { success: true };
+    } catch (error) {
+        console.error("Error toggling public status:", error.message);
+        return { success: false, error: error.message };
+    }
+};
+
+export const likeQuiz = async (quizId, userId) => {
+    try {
+        // Fetch current likes and liked_by array
+        const { data: quiz, error: fetchError } = await supabase
+            .from('quiz')
+            .select('likes, liked_by')
+            .eq('quizid', quizId)
+            .single();
+
+        if (fetchError) throw fetchError;
+
+        let likedBy = quiz.liked_by || [];
+        
+        // Prevent duplicate likes
+        if (likedBy.includes(userId)) {
+            return { success: false, message: "Already liked" };
+        }
+
+        likedBy.push(userId);
+        const newLikes = (quiz.likes || 0) + 1;
+
+        const { error: updateError } = await supabase
+            .from('quiz')
+            .update({ likes: newLikes, liked_by: likedBy })
+            .eq('quizid', quizId);
+
+        if (updateError) throw updateError;
+        
+        return { success: true, newLikes };
+    } catch (error) {
+        console.error("Error liking quiz:", error.message);
+        return { success: false, error: error.message };
+    }
+};
+
+export const getPublicQuizzes = async (currentUserId) => {
+    try {
+        const { data: quizzes, error } = await supabase
+            .from('quiz')
+            .select('*')
+            .eq('ispublic', true)
+            .neq('userid', currentUserId)
+            .neq('is_deleted', true)
+            .order('quizid', { ascending: false });
+
+        if (error) throw error;
+        
+        if (!quizzes || quizzes.length === 0) {
+            return { success: true, quizzes: [] };
+        }
+
+        // Get unique user IDs
+        const userIds = [...new Set(quizzes.map(q => q.userid))];
+
+        // Fetch User profiles
+        const { data: usersData, error: userError } = await supabase
+            .from('User')
+            .select('userId, userName, playerClass, fandomName')
+            .in('userId', userIds);
+
+        if (userError) throw userError;
+
+        // Map users for quick lookup
+        const userMap = {};
+        if (usersData) {
+            usersData.forEach(u => {
+                userMap[u.userId] = {
+                    userName: u.userName,
+                    playerClass: u.playerClass,
+                    fandomName: u.fandomName
+                };
+            });
+        }
+
+        // Merge creator info into quizzes
+        const enrichedQuizzes = quizzes.map(q => ({
+            ...q,
+            creator: userMap[q.userid] || { userName: 'Unknown' }
+        }));
+
+        return { success: true, quizzes: enrichedQuizzes };
+    } catch (e) {
+        console.error("Error fetching public quizzes:", e.message);
+        return { success: false, quizzes: [] };
+    }
+};
+
+export const cloneQuizToLibrary = async (quizId, newUserId) => {
+    try {
+        // 1. Fetch original quiz
+        const { data: originalQuiz, error: fetchErr } = await supabase
+            .from('quiz')
+            .select('*')
+            .eq('quizid', quizId)
+            .single();
+
+        if (fetchErr) throw fetchErr;
+
+        // Check if user already cloned this exact quiz by name
+        const cloneTitle = originalQuiz.title.endsWith('(Clone)') ? originalQuiz.title : originalQuiz.title + ' (Clone)';
+        const { data: existingClone, error: checkErr } = await supabase
+            .from('quiz')
+            .select('quizid, is_deleted')
+            .eq('userid', newUserId)
+            .eq('title', cloneTitle);
+
+        if (checkErr) throw checkErr;
+        
+        if (existingClone && existingClone.length > 0) {
+            const clone = existingClone[0];
+            if (clone.is_deleted) {
+                // If they deleted it in the past, just restore it instead of duplicating!
+                const { error: restoreErr } = await supabase
+                    .from('quiz')
+                    .update({ is_deleted: false })
+                    .eq('quizid', clone.quizid);
+                if (restoreErr) throw restoreErr;
+                return { success: true, message: "Restored to your library!" };
+            } else {
+                throw new Error("You already have this quest in your library!");
+            }
+        }
+
+        // 2. Clone into a new row
+        const { data: newQuizData, error: cloneErr } = await supabase
+            .from('quiz')
+            .insert([{
+                userid: newUserId,
+                title: cloneTitle,
+                description: originalQuiz.description,
+                basexp: originalQuiz.basexp,
+                max_xp: originalQuiz.max_xp || 150,
+                ispublic: false
+            }])
+            .select();
+
+        if (cloneErr) throw cloneErr;
+        const newQuizId = newQuizData[0].quizid;
+
+        // 3. Fetch original questions
+        const { data: originalQuestions, error: qErr } = await supabase
+            .from('question')
+            .select('*')
+            .eq('quizid', quizId);
+
+        if (qErr) throw qErr;
+
+        if (originalQuestions && originalQuestions.length > 0) {
+            // Duplicate questions
+            const clonedQuestionsToInsert = originalQuestions.map(q => ({
+                quizid: newQuizId,
+                text: q.text
+            }));
+            
+            const { data: insertedQuestions, error: insQErr } = await supabase
+                .from('question')
+                .insert(clonedQuestionsToInsert)
+                .select();
+
+            if (insQErr) throw insQErr;
+
+            // 4. Fetch all answers for original questions
+            const originalQuestionIds = originalQuestions.map(q => q.questionid);
+            const { data: originalAnswers, error: ansErr } = await supabase
+                .from('answer')
+                .select('*')
+                .in('questionid', originalQuestionIds);
+                
+            if (ansErr) throw ansErr;
+
+            // Map old question IDs to new question IDs
+            const questionIdMap = {};
+            originalQuestions.forEach((oq, index) => {
+                const newQ = insertedQuestions.find(iq => iq.text === oq.text);
+                if (newQ) {
+                    questionIdMap[oq.questionid] = newQ.questionid;
+                }
+            });
+
+            // Prepare answers for insertion
+            const clonedAnswersToInsert = [];
+            for (const ans of originalAnswers) {
+                const newQuestionId = questionIdMap[ans.questionid];
+                if (newQuestionId) {
+                    clonedAnswersToInsert.push({
+                        questionid: newQuestionId,
+                        text: ans.text,
+                        iscorrect: ans.iscorrect
+                    });
+                }
+            }
+
+            if (clonedAnswersToInsert.length > 0) {
+                const { error: insAnsErr } = await supabase
+                    .from('answer')
+                    .insert(clonedAnswersToInsert);
+                if (insAnsErr) throw insAnsErr;
+            }
+        }
+
+        return { success: true, newQuizId };
+    } catch (e) {
+        console.error("Error cloning quiz:", e.message);
+        return { success: false, error: e.message };
     }
 };
 
@@ -803,6 +1125,10 @@ export const saveReadingSession = async (userId, documentId, activeSeconds, corr
             }]);
 
         if (error) throw error;
+
+        // Update streak
+        await updateUserStreak(userId);
+
         return { success: true, xpEarned: finalXP, tooShort: false };
     } catch (error) {
         console.error('Error saving reading session:', error.message);
@@ -929,22 +1255,49 @@ export const getLeaderboard = async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // COMMUNITY — ACTIVITY FEED
 // Merges recent quiz completions and reading sessions into a single feed.
+// Can be filtered by friends if currentUserId is provided.
 // ─────────────────────────────────────────────────────────────────────────────
-export const getRecentActivity = async () => {
+export const getRecentActivity = async (currentUserId = null) => {
     try {
+        let allowedUserIds = null;
+
+        // If filtering by friends, fetch accepted friends list first
+        if (currentUserId) {
+            const { data: friendships } = await supabase
+                .from('friendship')
+                .select('user_id_1, user_id_2')
+                .eq('status', 'accepted')
+                .or(`user_id_1.eq.${currentUserId},user_id_2.eq.${currentUserId}`);
+
+            const friends = new Set([currentUserId]);
+            if (friendships) {
+                friendships.forEach(f => {
+                    friends.add(f.user_id_1);
+                    friends.add(f.user_id_2);
+                });
+            }
+            allowedUserIds = Array.from(friends);
+        }
+
         // Recent quiz scores
-        const { data: quizActivity } = await supabase
+        let quizQuery = supabase
             .from('userquizscore')
             .select('userid, quizid, attemptno, score, xpreward, date')
             .order('date', { ascending: false })
             .limit(20);
 
+        if (allowedUserIds) quizQuery = quizQuery.in('userid', allowedUserIds);
+        const { data: quizActivity } = await quizQuery;
+
         // Recent reading sessions
-        const { data: readingActivity } = await supabase
+        let readQuery = supabase
             .from('reading_session')
             .select('userid, xp_earned, duration_seconds, session_date, created_at')
             .order('created_at', { ascending: false })
             .limit(20);
+
+        if (allowedUserIds) readQuery = readQuery.in('userid', allowedUserIds);
+        const { data: readingActivity } = await readQuery;
 
         // Collect all involved user IDs
         const userIds = new Set([

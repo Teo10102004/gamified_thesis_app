@@ -23,6 +23,7 @@ import { updateFullProfile, uploadAvatar, checkUsernameAvailable, saveFandomCach
 import { generateSeriesAesthetic, generateFandomRanks } from '../services/aiService';
 import { supabase } from '../services/supabase';
 import FandomSearch from '../components/FandomSearch';
+import FandomBackground from '../components/FandomBackground';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -285,16 +286,18 @@ export default function ProfileSettings({ navigation }) {
                     fandomName: targetFandom
                 });
 
-                // Overwrite the global cache so future users get this improved DNA!
-                await saveFandomCache(
-                    targetFandom,
-                    profile.playerClass,
-                    aesthetic.primaryColor,
-                    aesthetic.secondaryColor,
-                    aesthetic.backgroundColor,
-                    aesthetic,
-                    finalRanks && finalRanks.length > 0 ? JSON.stringify(finalRanks) : null
-                );
+                // Save to global cache if this is the first generation OR we are upgrading an old cache (but NOT if the user is just doing a personal override!)
+                if (!cachedDNA || (!forceNewColors && (isCacheMissingRanks || isCacheMissingAnimation || isCacheMissingImage))) {
+                    await saveFandomCache(
+                        targetFandom,
+                        profile.playerClass,
+                        aesthetic.primaryColor,
+                        aesthetic.secondaryColor,
+                        aesthetic.backgroundColor,
+                        aesthetic,
+                        finalRanks && finalRanks.length > 0 ? JSON.stringify(finalRanks) : null
+                    );
+                }
 
                 Alert.alert("Evolution Complete!", "Your app has been re-forged with new Visual DNA.");
             } else {
@@ -302,6 +305,47 @@ export default function ProfileSettings({ navigation }) {
             }
         } catch (error) {
             Alert.alert("Forge Failed", `AI was unable to generate DNA at this time. Details: ${error.message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleRevertToDefault = async () => {
+        if (!profile.fandomName) return;
+        
+        try {
+            setLoading(true);
+            const cachedDNA = await getFandomCache(profile.fandomName, profile.playerClass);
+            if (!cachedDNA) {
+                Alert.alert("No Default Found", "This fandom doesn't have a global default theme yet!");
+                return;
+            }
+
+            const aesthetic = {
+                primaryColor: cachedDNA.primary_color,
+                secondaryColor: cachedDNA.secondary_color,
+                backgroundColor: cachedDNA.background_color,
+                ...cachedDNA.visual_config
+            };
+
+            const user = await getCurrentUser();
+            const updates = {
+                visualConfig: aesthetic,
+                primaryColor: aesthetic.primaryColor,
+                secondaryColor: aesthetic.secondaryColor,
+                backgroundColor: aesthetic.backgroundColor
+            };
+
+            await updateFullProfile(user.id, updates);
+
+            updateTheme({
+                ...aesthetic,
+                fandomName: profile.fandomName
+            });
+
+            Alert.alert("Reverted!", "Restored the original global theme for this Fandom.");
+        } catch (e) {
+            Alert.alert("Error", "Could not revert to default theme.");
         } finally {
             setLoading(false);
         }
@@ -326,6 +370,7 @@ export default function ProfileSettings({ navigation }) {
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor }]}>
+            <FandomBackground />
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
 
                 {/* Header */}
@@ -415,9 +460,14 @@ export default function ProfileSettings({ navigation }) {
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
                                 <Text style={[styles.label, { color: secondaryColor, marginBottom: 0 }]}>ACTIVE FANDOM</Text>
                                 {profile.fandomName ? (
-                                    <TouchableOpacity onPress={() => handleRegenerateDNA(false, null, true)} style={{ padding: 5 }}>
-                                        <Ionicons name="color-palette" size={20} color={primaryColor} />
-                                    </TouchableOpacity>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                        <TouchableOpacity onPress={handleRevertToDefault} style={{ padding: 5 }}>
+                                            <Ionicons name="refresh-circle" size={22} color={secondaryColor} />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity onPress={() => handleRegenerateDNA(false, null, true)} style={{ padding: 5 }}>
+                                            <Ionicons name="color-palette" size={20} color={primaryColor} />
+                                        </TouchableOpacity>
+                                    </View>
                                 ) : null}
                             </View>
                             

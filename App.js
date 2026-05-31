@@ -21,7 +21,10 @@ import LibraryDashboard from './src/screens/LibraryDashboard'; // Learning Sessi
 import FolderView from './src/screens/FolderView';             // Learning Sessions — Folder contents
 import ReadingSession from './src/screens/ReadingSession';     // Learning Sessions — Active reading mode
 import CommunityFeed from './src/screens/CommunityFeed';       // Community — Leaderboard + Activity Feed
-
+import FriendsDashboard from './src/screens/FriendsDashboard';
+import ChatScreen from './src/screens/ChatScreen';
+import AdminDashboard from './src/screens/AdminDashboard';
+import NotificationsScreen from './src/screens/NotificationsScreen';
 
 const Stack = createNativeStackNavigator(); // Create a stack navigator for handling screen navigation
 
@@ -45,6 +48,10 @@ export default function App() {
             <Stack.Screen name="FolderView" component={FolderView} />
             <Stack.Screen name="ReadingSession" component={ReadingSession} />
             <Stack.Screen name="CommunityFeed" component={CommunityFeed} />
+            <Stack.Screen name="FriendsDashboard" component={FriendsDashboard} />
+            <Stack.Screen name="ChatScreen" component={ChatScreen} />
+            <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
+            <Stack.Screen name="NotificationsScreen" component={NotificationsScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </ThemeProvider>

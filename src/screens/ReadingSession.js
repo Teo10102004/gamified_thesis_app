@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
-    ActivityIndicator, Alert, Modal, AppState, Animated
+    ActivityIndicator, Alert, Modal, AppState, Animated, TextInput, Linking
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { getCurrentUser } from '../services/authService';
 import {
@@ -12,6 +13,7 @@ import {
     saveReadingSession,
     checkDocumentReadToday,
 } from '../services/userService';
+import FandomBackground from '../components/FandomBackground';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ANTI-CHEAT CONSTANTS
@@ -36,12 +38,26 @@ export default function ReadingSession({ navigation, route }) {
     const [isPaused, setIsPaused]                 = useState(false);  // reason for pause shown in HUD
     const [pauseReason, setPauseReason]           = useState('');
 
+    // ── Pomodoro State ──────────────────────────────────────────────────────
+    const [isPomodoroEnabled, setIsPomodoroEnabled] = useState(false);
+    const [pomodoroPhase, setPomodoroPhase]         = useState('focus'); // 'focus' | 'break'
+    const [workDurationMins, setWorkDurationMins]   = useState(25);
+    const [breakDurationMins, setBreakDurationMins] = useState(5);
+    const [pomodoroSeconds, setPomodoroSeconds]     = useState(25 * 60);
+    const [showPomodoroSettings, setShowPomodoroSettings] = useState(false);
+
     // ── Anti-Cheat Refs ─────────────────────────────────────────────────────
     const timerRef         = useRef(null);   // setInterval for active seconds
     const idleTimerRef     = useRef(null);   // setTimeout for scroll idle
     const pingTimerRef     = useRef(null);   // setTimeout for next ping
     const lastScrollY      = useRef(0);
     const isRunningRef     = useRef(false);  // mirrors isRunning for use inside closures
+
+    // ── Pomodoro Refs ───────────────────────────────────────────────────────
+    const isPomodoroEnabledRef = useRef(false);
+    const pomodoroPhaseRef     = useRef('focus');
+    const workDurationRef      = useRef(25);
+    const breakDurationRef     = useRef(5);
 
     // ── Ping / Comprehension State ──────────────────────────────────────────
     const [pingVisible, setPingVisible]           = useState(false);
@@ -126,6 +142,64 @@ export default function ReadingSession({ navigation, route }) {
         clearInterval(pingCountdownRef.current);
     };
 
+    const handlePhaseSwitch = () => {
+        if (pomodoroPhaseRef.current === 'focus') {
+            pomodoroPhaseRef.current = 'break';
+            setPomodoroPhase('break');
+            setPomodoroSeconds(breakDurationRef.current * 60);
+            Alert.alert("Break Time! ☕", "Time to rest your eyes. The document will be locked until the break is over.");
+        } else {
+            pomodoroPhaseRef.current = 'focus';
+            setPomodoroPhase('focus');
+            setPomodoroSeconds(workDurationRef.current * 60);
+            Alert.alert("Focus Time! 🍅", "Break is over. Back to reading!");
+        }
+    };
+
+    const startInterval = () => {
+        timerRef.current = setInterval(() => {
+            if (isPomodoroEnabledRef.current) {
+                setPomodoroSeconds(prev => {
+                    if (prev <= 1) {
+                        handlePhaseSwitch();
+                        return 0; // Phase switch resets this
+                    }
+                    return prev - 1;
+                });
+            }
+            
+            // Only increment XP if not in a break
+            if (!isPomodoroEnabledRef.current || pomodoroPhaseRef.current === 'focus') {
+                setActiveSeconds(s => s + 1);
+            }
+        }, 1000);
+    };
+
+    const togglePomodoro = () => {
+        const newValue = !isPomodoroEnabled;
+        setIsPomodoroEnabled(newValue);
+        isPomodoroEnabledRef.current = newValue;
+        if (newValue) {
+            pomodoroPhaseRef.current = 'focus';
+            setPomodoroPhase('focus');
+            setPomodoroSeconds(workDurationRef.current * 60);
+        }
+    };
+
+    const savePomodoroSettings = (w, b) => {
+        setWorkDurationMins(w);
+        setBreakDurationMins(b);
+        workDurationRef.current = w;
+        breakDurationRef.current = b;
+        
+        if (isPomodoroEnabled) {
+            pomodoroPhaseRef.current = 'focus';
+            setPomodoroPhase('focus');
+            setPomodoroSeconds(w * 60);
+        }
+        setShowPomodoroSettings(false);
+    };
+
     const startSession = () => {
         if (alreadyReadToday) {
             Alert.alert(
@@ -138,10 +212,7 @@ export default function ReadingSession({ navigation, route }) {
         isRunningRef.current = true;
         setIsPaused(false);
 
-        // Active seconds ticker
-        timerRef.current = setInterval(() => {
-            setActiveSeconds(s => s + 1);
-        }, 1000);
+        startInterval();
 
         // Start idle watchdog
         resetIdleTimer();
@@ -164,9 +235,7 @@ export default function ReadingSession({ navigation, route }) {
         setIsRunning(true);
         isRunningRef.current = true;
 
-        timerRef.current = setInterval(() => {
-            setActiveSeconds(s => s + 1);
-        }, 1000);
+        startInterval();
 
         resetIdleTimer();
         schedulePing();
@@ -261,9 +330,7 @@ export default function ReadingSession({ navigation, route }) {
         setPingVisible(false);
         // Resume timer if session is still active
         if (isRunningRef.current) {
-            timerRef.current = setInterval(() => {
-                setActiveSeconds(s => s + 1);
-            }, 1000);
+            startInterval();
             resetIdleTimer();
             schedulePing();
         }
@@ -273,6 +340,11 @@ export default function ReadingSession({ navigation, route }) {
     // END SESSION
     // ─────────────────────────────────────────────────────────────────────────
     const handleEndSession = () => {
+        if (activeSeconds === 0) {
+            navigation.goBack();
+            return;
+        }
+
         Alert.alert(
             'End Session?',
             'This will stop the timer and save your XP.',
@@ -353,6 +425,7 @@ export default function ReadingSession({ navigation, route }) {
         const { xpEarned, tooShort, alreadyRead, activeSeconds: finalSecs, pingStats: ps } = sessionResult;
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+                <FandomBackground />
                 <View style={styles.resultsContainer}>
                     <Ionicons name="trophy" size={80} color={theme.primaryColor} />
                     <Text style={[styles.resultsTitle, { color: theme.primaryColor }]}>
@@ -407,17 +480,32 @@ export default function ReadingSession({ navigation, route }) {
     // ─────────────────────────────────────────────────────────────────────────
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.backgroundColor }]}>
+            <FandomBackground />
 
             {/* ── TOP HUD ── */}
             <View style={[styles.hud, { borderBottomColor: theme.primaryColor + '44' }]}>
-                <TouchableOpacity onPress={handleEndSession}>
-                    <Ionicons name="close" size={26} color={theme.secondaryColor} />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity onPress={handleEndSession}>
+                        <Ionicons name="close" size={26} color={theme.secondaryColor} />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                        onPress={togglePomodoro}
+                        onLongPress={() => setShowPomodoroSettings(true)}
+                        style={{ opacity: isPomodoroEnabled ? 1 : 0.6, marginLeft: 20 }}
+                    >
+                        <Text style={{ fontSize: 24 }}>🍅</Text>
+                    </TouchableOpacity>
+                </View>
 
                 <View style={styles.hudCenter}>
                     <Text style={[styles.hudTimer, { color: isRunning ? theme.primaryColor : '#FF4444' }]}>
-                        {formatTime(activeSeconds)}
+                        {isPomodoroEnabled ? formatTime(pomodoroSeconds) : formatTime(activeSeconds)}
                     </Text>
+                    {isPomodoroEnabled && (
+                        <Text style={[styles.hudPauseLabel, { color: pomodoroPhase === 'focus' ? theme.primaryColor : '#FF8C00' }]}>
+                            {pomodoroPhase === 'focus' ? 'FOCUS' : 'BREAK'}
+                        </Text>
+                    )}
                     {isPaused && (
                         <Text style={styles.hudPauseLabel}>PAUSED — {pauseReason}</Text>
                     )}
@@ -440,16 +528,31 @@ export default function ReadingSession({ navigation, route }) {
             </Text>
 
             {/* ── SCROLLABLE TEXT ── */}
-            <ScrollView
-                style={styles.textScroll}
-                contentContainerStyle={styles.textContent}
-                onScroll={handleScroll}
-                scrollEventThrottle={500}
-            >
-                <Text style={[styles.bodyText, { color: theme.textColor }]}>
-                    {docData?.extracted_text || 'No content available.'}
-                </Text>
-            </ScrollView>
+            <View style={{ flex: 1 }}>
+                <ScrollView
+                    style={styles.textScroll}
+                    contentContainerStyle={styles.textContent}
+                    onScroll={handleScroll}
+                    scrollEventThrottle={500}
+                >
+                    <Text style={[styles.bodyText, { color: theme.textColor }]}>
+                        {docData?.extracted_text || 'No content available.'}
+                    </Text>
+                </ScrollView>
+
+                {isPomodoroEnabled && pomodoroPhase === 'break' && (
+                    <View style={[styles.breakOverlay, { backgroundColor: theme.backgroundColor }]}>
+                        <Text style={{ fontSize: 60, marginBottom: 20 }}>☕</Text>
+                        <Text style={[styles.resultsTitle, { color: '#FF8C00', textAlign: 'center', marginBottom: 10 }]}>Take a Break!</Text>
+                        <Text style={{ color: theme.textColor, fontSize: 16, textAlign: 'center', paddingHorizontal: 40, lineHeight: 24 }}>
+                            Your {breakDurationMins}-minute break has started. Look away from the screen and rest your eyes.
+                        </Text>
+                        <Text style={[styles.hudTimer, { color: '#FF8C00', marginTop: 40, fontSize: 48 }]}>
+                            {formatTime(pomodoroSeconds)}
+                        </Text>
+                    </View>
+                )}
+            </View>
 
             {/* ── CONTROL BAR ── */}
             <View style={[styles.controlBar, { borderTopColor: theme.primaryColor + '44' }]}>
@@ -537,6 +640,52 @@ export default function ReadingSession({ navigation, route }) {
                     </View>
                 </View>
             </Modal>
+
+            {/* ── POMODORO SETTINGS MODAL ── */}
+            <Modal visible={showPomodoroSettings} transparent animationType="fade">
+                <View style={styles.pingOverlay}>
+                    <View style={[styles.pingBox, { backgroundColor: '#0D0D0D', borderColor: theme.primaryColor }]}>
+                        <Text style={[styles.pingHeaderText, { color: theme.primaryColor, marginBottom: 20 }]}>
+                            🍅 Pomodoro Settings
+                        </Text>
+
+                        <Text style={{ color: 'white', marginBottom: 8, fontWeight: 'bold' }}>Focus Duration (minutes)</Text>
+                        <TextInput 
+                            style={styles.settingsInput}
+                            keyboardType="number-pad"
+                            defaultValue={workDurationRef.current.toString()}
+                            onChangeText={t => workDurationRef.current = parseInt(t) || 25}
+                        />
+
+                        <Text style={{ color: 'white', marginBottom: 8, marginTop: 15, fontWeight: 'bold' }}>Break Duration (minutes)</Text>
+                        <TextInput 
+                            style={styles.settingsInput}
+                            keyboardType="number-pad"
+                            defaultValue={breakDurationRef.current.toString()}
+                            onChangeText={t => breakDurationRef.current = parseInt(t) || 5}
+                        />
+
+                        <TouchableOpacity 
+                            style={[styles.doneBtn, { backgroundColor: theme.primaryColor, marginTop: 25, paddingVertical: 14 }]}
+                            onPress={() => savePomodoroSettings(workDurationRef.current, breakDurationRef.current)}
+                        >
+                            <Text style={[styles.doneBtnText, { textAlign: 'center' }]}>Save Settings</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity 
+                            style={{ marginTop: 15, paddingVertical: 10 }}
+                            onPress={() => setShowPomodoroSettings(false)}
+                        >
+                            <Text style={{ color: 'gray', textAlign: 'center', fontWeight: 'bold' }}>Cancel</Text>
+                        </TouchableOpacity>
+
+                        <Text style={{ color: 'gray', fontSize: 11, marginTop: 20, textAlign: 'center' }}>
+                            Long-press the 🍅 icon during reading to open this menu.
+                        </Text>
+                    </View>
+                </View>
+            </Modal>
+
         </SafeAreaView>
     );
 }
@@ -609,4 +758,62 @@ const styles = StyleSheet.create({
     warningText: { color: '#FF8C00', fontSize: 13, textAlign: 'center', marginTop: 10, lineHeight: 20 },
     doneBtn: { marginTop: 30, paddingVertical: 16, paddingHorizontal: 50, borderRadius: 30 },
     doneBtnText: { color: '#FFF', fontSize: 18, fontWeight: '900' },
+
+    // Pomodoro Overlays
+    breakOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 10,
+    },
+    settingsInput: {
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 8,
+        color: '#FFF',
+        padding: 12,
+        fontSize: 16,
+    },
+
+    // Global Modal Styles
+    modalOverlay: {
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.85)', 
+        justifyContent: 'center', 
+        padding: 20
+    },
+    modalContent: {
+        borderRadius: 20, 
+        padding: 22,
+        alignItems: 'center'
+    },
+    modalTitle: {
+        fontSize: 20, 
+        fontWeight: '900', 
+        marginBottom: 8
+    },
+    modalDesc: {
+        fontSize: 13, 
+        textAlign: 'center', 
+        lineHeight: 20,
+        opacity: 0.8
+    },
+    modalActions: {
+        flexDirection: 'row', 
+        justifyContent: 'space-between', 
+        width: '100%', 
+        gap: 10,
+        marginTop: 15
+    },
+    modalBtn: {
+        flex: 1, 
+        paddingVertical: 14, 
+        borderRadius: 12, 
+        alignItems: 'center'
+    },
+    modalBtnText: {
+        fontWeight: 'bold', 
+        fontSize: 15
+    }
 });

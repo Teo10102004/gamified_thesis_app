@@ -115,6 +115,25 @@ const Particle = ({ type, color, secondaryColor }) => {
                 ]).start(({ finished }) => {
                     if (finished) animateParticle();
                 });
+            } else if (type === 'particles') {
+                translateY.setValue(height + 50);
+                translateX.setValue(config.startX);
+                opacity.setValue(0);
+                
+                Animated.sequence([
+                    Animated.delay(Math.random() * 2000),
+                    Animated.parallel([
+                        Animated.timing(opacity, { toValue: 0.4, duration: 2000, useNativeDriver: true }),
+                        Animated.timing(translateY, { toValue: -50, duration: config.speed * 2, useNativeDriver: true }),
+                        Animated.timing(translateX, { toValue: config.startX + (Math.random() * 60 - 30), duration: config.speed * 2, useNativeDriver: true }),
+                        Animated.sequence([
+                            Animated.delay(config.speed * 1.5),
+                            Animated.timing(opacity, { toValue: 0, duration: config.speed * 0.5, useNativeDriver: true })
+                        ])
+                    ])
+                ]).start(({ finished }) => {
+                    if (finished) animateParticle();
+                });
             }
         };
 
@@ -173,11 +192,23 @@ const Particle = ({ type, color, secondaryColor }) => {
                  backgroundColor: color || '#00FF00',
                  opacity: 0.8,
              };
+        } else if (type === 'particles') {
+            return {
+                width: config.size,
+                height: config.size,
+                borderRadius: config.size / 2,
+                backgroundColor: color || '#FFFFFF',
+                opacity: 0.5,
+                shadowColor: color || '#FFFFFF',
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.8,
+                shadowRadius: config.size,
+            };
         }
         return {};
     };
 
-    if (type === 'none' || !type) return null;
+    // Removed early return for 'none' to allow the fallback to kick in
 
     return (
         <Animated.View
@@ -198,12 +229,12 @@ const Particle = ({ type, color, secondaryColor }) => {
 };
 
 export default function FandomAnimation({ animationType, color, secondaryColor }) {
-    if (!animationType || animationType === 'none') {
-        return null;
-    }
+    // If the AI decides not to assign an animation ('none') or fails to, we fall back to a subtle 'particles' animation
+    // so the dashboard always feels alive and immersive.
+    const resolvedType = (!animationType || animationType === 'none') ? 'particles' : animationType;
 
     const particles = Array.from({ length: NUM_PARTICLES }).map((_, i) => (
-        <Particle key={i} type={animationType} color={color} secondaryColor={secondaryColor} />
+        <Particle key={i} type={resolvedType} color={color} secondaryColor={secondaryColor} />
     ));
 
     return (

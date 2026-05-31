@@ -193,6 +193,9 @@ export const generateSeriesAesthetic = async (seriesName) => {
         "animationSpeed": 100 to 800 (ms — fast for action, slow for peaceful),
         "borderRadius": 0 to 30 (px — sharp for edgy, round for friendly),
         "animationType": "One of: 'embers', 'snow', 'matrix', 'bubbles', 'stars', 'none' - based on the vibe of the series",
+        "iconName": "A valid Ionicons name that represents the series (e.g. 'planet', 'flash', 'leaf', 'hardware-chip', 'shield', 'skull', 'aperture', 'musical-notes')",
+        "tabEmojis": ["emoji for Leaderboard", "emoji for Activity", "emoji for Quests"],
+        "streakEmoji": "A single emoji representing a 'streak' or 'energy' for this series (e.g. '🔥', '⚡', '🌟', '❄️', '🗡️')",
         "vibeDescription": "A 5-word summary of the look"
     }`;
 
@@ -338,4 +341,49 @@ export const generateFandomRanks = async (fandomName, playerClass) => {
 
     return await callGemini(payload);
 };
-
+
+// --- PUBLIC QUEST DESCRIPTION GENERATOR ---
+// Generates a short, catchy description for a quest when it is made public.
+export const generateQuizDescription = async (questions) => {
+    // We only send a sample of the questions to save tokens and keep the description general.
+    const questionSample = questions.slice(0, 3).map(q => q.question).join(" ");
+    
+    const prompt = `Based on these sample questions, write a short, catchy 1-2 sentence description for a gamified quest.
+    
+    STRICT RULES:
+    1. Do NOT mention that this is an AI generated quiz.
+    2. Write it like a teaser for a game level (e.g. "Test your knowledge on ancient Rome! Can you survive the Colosseum?").
+    3. Keep it under 25 words total.
+    
+    Sample questions:
+    "${questionSample}"`;
+
+    try {
+        const payload = {
+            contents: [{ parts: [{ text: prompt }] }]
+        };
+
+        // We bypass JSON parsing and extract raw text
+        for (let i = 0; i < MODELS.length; i++) {
+            const model = MODELS[i];
+            const response = await fetch(getApiUrl(model), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+
+            if (data.error) {
+                if (data.error.code === 503 || data.error.code === 429) continue;
+                return null;
+            }
+
+            return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+        }
+        return null;
+    } catch (error) {
+        console.error('Description generation error:', error.message);
+        return null;
+    }
+};

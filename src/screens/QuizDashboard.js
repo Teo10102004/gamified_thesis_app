@@ -5,7 +5,8 @@ import { useFocusEffect } from '@react-navigation/native'; // Refreshes the list
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { getCurrentUser } from '../services/authService';
-import { getUserQuizzes, deleteQuiz, fetchQuizQuestions } from '../services/userService';
+import { getUserQuizzes, deleteQuiz, fetchQuizQuestions, toggleQuizPublic } from '../services/userService';
+import { generateQuizDescription } from '../services/aiService';
 import FandomBackground from '../components/FandomBackground';
 
 
@@ -16,6 +17,7 @@ export default function QuizDashboard({ navigation }) {
     // State to hold our list of quizzes and the loading status
     const [quizzes, setQuizzes] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadingQuizId, setLoadingQuizId] = useState(null);
 
     // This function fetches the quizzes from Supabase
     const loadQuizzes = async () => {
@@ -65,6 +67,33 @@ export default function QuizDashboard({ navigation }) {
         );
     };
 
+    const handleTogglePublic = async (quiz) => {
+        const newStatus = !quiz.ispublic;
+        let publicDescription = quiz.public_description;
+
+        // If turning public and no description exists, we generate one
+        if (newStatus && !publicDescription) {
+            setLoadingQuizId(quiz.quizid);
+            
+            const result = await fetchQuizQuestions(quiz.quizid);
+            if (result.success && result.questions.length > 0) {
+                publicDescription = await generateQuizDescription(result.questions);
+            }
+            
+            setLoadingQuizId(null);
+        }
+
+        // Optimistically update UI
+        setQuizzes(prev => prev.map(q => q.quizid === quiz.quizid ? { ...q, ispublic: newStatus, public_description: publicDescription } : q));
+        
+        const result = await toggleQuizPublic(quiz.quizid, newStatus, publicDescription);
+        if (!result.success) {
+            Alert.alert("Error", "Could not change privacy status.");
+            // Revert on failure
+            setQuizzes(prev => prev.map(q => q.quizid === quiz.quizid ? { ...q, ispublic: quiz.ispublic, public_description: quiz.public_description } : q));
+        }
+    };
+
     // This is how we render each individual quiz row in the list
     const renderQuizItem = ({ item }) => (
         <View style={[
@@ -105,13 +134,30 @@ export default function QuizDashboard({ navigation }) {
                 </View>
                 <View style={styles.textContainer}>
                     <Text style={[styles.quizTitle, { color: theme.textColor }]} numberOfLines={2}>{item.title}</Text>
-                    <Text style={[styles.quizStats, { color: 'gray' }]}>Personal Best: {item.bestScore} XP</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                        <Text style={[styles.quizStats, { color: 'gray', marginRight: 12 }]}>Best: {item.bestScore} XP</Text>
+                        {item.likes > 0 && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <Ionicons name="heart" size={14} color="#FF4444" />
+                                <Text style={{ color: 'gray', fontSize: 12 }}>{item.likes}</Text>
+                            </View>
+                        )}
+                    </View>
                 </View>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => handleDelete(item.quizid)} style={styles.deleteButton}>
-                <Ionicons name="trash-outline" size={24} color="#FF4444" />
-            </TouchableOpacity>
+            <View style={styles.actionButtons}>
+                <TouchableOpacity onPress={() => handleTogglePublic(item)} style={styles.actionButton}>
+                    {loadingQuizId === item.quizid ? (
+                        <ActivityIndicator size="small" color="#44FF44" />
+                    ) : (
+                        <Ionicons name={item.ispublic ? "globe" : "lock-closed"} size={24} color={item.ispublic ? "#44FF44" : "gray"} />
+                    )}
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleDelete(item.quizid)} style={styles.actionButton}>
+                    <Ionicons name="trash-outline" size={24} color="#FF4444" />
+                </TouchableOpacity>
+            </View>
         </View>
     );
 
@@ -179,7 +225,8 @@ const styles = StyleSheet.create({
     textContainer: { flex: 1 },
     quizTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 4 },
     quizStats: { fontSize: 14 },
-    deleteButton: { padding: 10 },
+    actionButtons: { flexDirection: 'row', alignItems: 'center' },
+    actionButton: { padding: 10, marginLeft: 5 },
     emptyContainer: { alignItems: 'center', marginTop: 100 },
     emptyText: { fontSize: 16, marginTop: 20, textAlign: 'center', paddingHorizontal: 40 },
     createButton: { marginTop: 30, paddingVertical: 15, paddingHorizontal: 30, borderRadius: 25 },

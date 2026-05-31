@@ -10,7 +10,7 @@ import * as DocumentPicker from 'expo-document-picker';
 // Expo 54 requires us to import from '/legacy' if we want to use the older readAsStringAsync method.
 import * as FileSystem from 'expo-file-system/legacy'; 
 import { generateQuizFromFile } from '../services/aiService';
-import { createNewQuiz, saveQuizQuestions } from '../services/userService'; // Import our new tool for creating quiz records
+import { createNewQuiz, saveQuizQuestions, checkDocumentUsed, restoreDeletedQuiz, fetchQuizQuestions } from '../services/userService'; // Import our new tool for creating quiz records
 import { getCurrentUser } from '../services/authService';
 
 export default function QuestSetup({ navigation }) {
@@ -78,19 +78,51 @@ export default function QuestSetup({ navigation }) {
             
             const mimeType = selectedFile.mimeType || 'application/pdf';
             
+            const user = await getCurrentUser();
+            if (!user) throw new Error("Not logged in");
+
+            // --- ANTI-CHEAT CHECK ---
+            const exactDescription = `AI quest generated from ${selectedFile.name} [Difficulty: ${difficulty}] [Length: ${questionCount}]`;
+            const checkResult = await checkDocumentUsed(user.id, exactDescription);
+            
+            if (checkResult.used) {
+                // If it was deleted, restore it so they can see it in their library again
+                if (checkResult.isDeleted) {
+                    await restoreDeletedQuiz(checkResult.quizId);
+                }
+                
+                // Fetch the original questions instead of generating new ones
+                const { success, questions } = await fetchQuizQuestions(checkResult.quizId);
+                
+                if (success && questions.length > 0) {
+                    Alert.alert(
+                        "Anti-Cheat Active", 
+                        `You have already generated a ${difficulty} quest from this document with ${questionCount} questions. We have restored your original quest instead of generating a new one.`
+                    );
+                    setIsGenerating(false);
+                    // Navigate to the restored quiz!
+                    navigation.navigate('QuizScreen', { 
+                        questions: questions,
+                        quizId: checkResult.quizId 
+                    });
+                    return;
+                }
+            }
+
             // 3. Call AI
             generatedQuestions = await generateQuizFromFile(base64Data, mimeType, questionCount, difficulty);
 
             // If the AI successfully gave us back a list of questions...
             if (generatedQuestions && generatedQuestions.length > 0) {
                 
-                const user = await getCurrentUser();
-                if (!user) throw new Error("Not logged in");
+                // Calculate max possible XP for this quiz to track completion
+                const difficultyMultiplier = difficulty === 'Hard' ? 1.5 : difficulty === 'Medium' ? 1.2 : 1;
+                // Base XP is 10 per question. Flawless bonus is 50.
+                const maxXP = Math.round(questionCount * 10 * difficultyMultiplier) + 50;
 
-                // --- THE DATABASE FIX ---
                 // Before we start playing, we register this specific quiz in the database.
-                // We pass the user.id so it is linked ONLY to the creator.
-                const quizResult = await createNewQuiz(user.id, questName, `AI quest generated from ${selectedFile.name}`);
+                // We pass the exactDescription so we can track it later for anti-cheat.
+                const quizResult = await createNewQuiz(user.id, questName, exactDescription, maxXP);
 
                 if (quizResult.success) {
                     // --- THE REDO FIX ---
