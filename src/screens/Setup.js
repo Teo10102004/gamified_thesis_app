@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getCurrentUser } from '../services/authService';
-import { updateFullProfile, checkUsernameAvailable, getFandomCache, saveFandomCache } from '../services/userService';
+import { updateFullProfile, checkUsernameAvailable, getFandomCache, saveFandomCache, updateUserStreak } from '../services/userService';
 import ImageColors from 'react-native-image-colors';
 import FandomSearch from '../components/FandomSearch';
 import { generateSeriesAesthetic, generateFandomRanks } from '../services/aiService';
@@ -118,7 +118,8 @@ export default function Setup() {
                 glowIntensity: 10,
                 shadowOpacity: 0.5,
                 animationSpeed: 300,
-                borderRadius: 15
+                borderRadius: 15,
+                backgroundImageUrl: imageUrl || null
             };
             
             let finalFandomRanks = null;
@@ -132,7 +133,8 @@ export default function Setup() {
                     primary = cachedDNA.primary_color;
                     secondary = cachedDNA.secondary_color;
                     bg = cachedDNA.background_color;
-                    visualConfig = cachedDNA.visual_config;
+                    visualConfig = cachedDNA.visual_config || visualConfig;
+                    if (imageUrl) visualConfig.backgroundImageUrl = imageUrl;
                     
                     // The cache returns JSON strings (or objects depending on Postgres type), so we parse if needed
                     finalFandomRanks = typeof cachedDNA.fandom_ranks === 'string' 
@@ -149,6 +151,7 @@ export default function Setup() {
 
                     if (aesthetic) {
                         visualConfig = aesthetic;
+                        if (imageUrl) visualConfig.backgroundImageUrl = imageUrl;
                         primary = aesthetic.primaryColor || primary;
                         secondary = aesthetic.secondaryColor || secondary;
                         bg = aesthetic.backgroundColor || bg;
@@ -193,7 +196,9 @@ export default function Setup() {
                 backgroundColor: bg,
                 visualConfig: visualConfig // Save the DNA!
             }); 
-                
+            
+            // Trigger the user's first streak to immediately populate their DAU data!
+            await updateUserStreak(user.id);
 
             Alert.alert('Character Setup Complete', `Welcome to the Gamified Learning App, ${name}!`); // Show a success alert when the character setup is complete
 

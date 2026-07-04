@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import FandomBackground from '../components/FandomBackground';
 import { getCurrentUser } from '../services/authService';
-import { getChatHistory, sendMessage } from '../services/socialService';
+import { getChatHistory, sendMessage, checkIsMuted } from '../services/socialService';
 
 export default function ChatScreen({ route, navigation }) {
     const { friendId, friendName, avatarUrl } = route.params;
@@ -20,6 +20,7 @@ export default function ChatScreen({ route, navigation }) {
     const [inputText, setInputText] = useState('');
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
+    const [isMuted, setIsMuted] = useState(false);
 
     const pollInterval = useRef(null);
 
@@ -34,6 +35,8 @@ export default function ChatScreen({ route, navigation }) {
             }
             
             if (uid) {
+                const muted = await checkIsMuted(uid);
+                setIsMuted(muted);
                 const res = await getChatHistory(uid, friendId);
                 if (res.success) {
                     // Reverse because FlatList is inverted (newest at bottom)
@@ -134,22 +137,23 @@ export default function ChatScreen({ route, navigation }) {
                 <View style={styles.inputArea}>
                     <TextInput
                         style={styles.textInput}
-                        placeholder="Type a message..."
-                        placeholderTextColor="gray"
+                        placeholder={isMuted ? "You are muted." : "Type a message..."}
+                        placeholderTextColor={isMuted ? "#FF3B30" : "gray"}
                         value={inputText}
                         onChangeText={setInputText}
                         multiline
                         maxLength={500}
+                        editable={!isMuted}
                     />
                     <TouchableOpacity 
                         style={[
                             styles.sendBtn, 
-                            { backgroundColor: inputText.trim() ? primaryColor : 'rgba(255,255,255,0.1)' }
+                            { backgroundColor: (inputText.trim() && !isMuted) ? primaryColor : 'rgba(255,255,255,0.1)' }
                         ]}
                         onPress={handleSend}
-                        disabled={!inputText.trim() || sending}
+                        disabled={!inputText.trim() || sending || isMuted}
                     >
-                        <Ionicons name="send" size={18} color={inputText.trim() ? '#000' : 'gray'} />
+                        <Ionicons name="send" size={18} color={(inputText.trim() && !isMuted) ? '#000' : 'gray'} />
                     </TouchableOpacity>
                 </View>
             </KeyboardAvoidingView>

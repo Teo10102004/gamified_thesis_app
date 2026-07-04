@@ -1,5 +1,20 @@
 import { supabase } from './supabase';
 
+export const checkIsMuted = async (userId) => {
+    try {
+        const { data, error } = await supabase
+            .from('User')
+            .select('visualConfig')
+            .eq('userId', userId)
+            .single();
+            
+        if (error) return false;
+        return data?.visualConfig?.is_muted || false;
+    } catch (e) {
+        return false;
+    }
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FRIENDSHIP & SOCIAL SERVICE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,6 +46,9 @@ export const searchUserByExactUsername = async (username) => {
  */
 export const sendFriendRequest = async (senderId, receiverId) => {
     try {
+        const isMuted = await checkIsMuted(senderId);
+        if (isMuted) return { success: false, error: 'You have been muted by an admin and cannot send friend requests.' };
+
         // Check if a request already exists (either direction)
         const { data: existing, error: checkError } = await supabase
             .from('friendship')
@@ -173,6 +191,9 @@ export const getChatHistory = async (userId1, userId2) => {
  */
 export const sendMessage = async (senderId, receiverId, text) => {
     try {
+        const isMuted = await checkIsMuted(senderId);
+        if (isMuted) return { success: false, error: 'You have been muted by an admin and cannot send messages.' };
+
         const { data, error } = await supabase
             .from('chat_message')
             .insert({

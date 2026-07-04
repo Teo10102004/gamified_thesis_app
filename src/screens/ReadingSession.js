@@ -19,7 +19,6 @@ import FandomBackground from '../components/FandomBackground';
 // ANTI-CHEAT CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 const IDLE_TIMEOUT_MS       = 60_000;   // Pause XP after 60s of no scrolling
-const PING_INTERVAL_MS      = 3 * 60_000; // Fire a comprehension ping every 3 minutes
 const MIN_SESSION_SECONDS   = 120;       // Sessions under 2 min earn 0 XP
 
 export default function ReadingSession({ navigation, route }) {
@@ -44,7 +43,8 @@ export default function ReadingSession({ navigation, route }) {
     const [workDurationMins, setWorkDurationMins]   = useState(25);
     const [breakDurationMins, setBreakDurationMins] = useState(5);
     const [pomodoroSeconds, setPomodoroSeconds]     = useState(25 * 60);
-    const [showPomodoroSettings, setShowPomodoroSettings] = useState(false);
+    const [showSessionSettings, setShowSessionSettings] = useState(false);
+    const [pingIntervalMins, setPingIntervalMins]   = useState(3);
 
     // ── Anti-Cheat Refs ─────────────────────────────────────────────────────
     const timerRef         = useRef(null);   // setInterval for active seconds
@@ -58,6 +58,12 @@ export default function ReadingSession({ navigation, route }) {
     const pomodoroPhaseRef     = useRef('focus');
     const workDurationRef      = useRef(25);
     const breakDurationRef     = useRef(5);
+    const pingIntervalRef      = useRef(3);
+    const scrollPercentageRef  = useRef(0); // Tracks how far down the document the user is
+
+    // ── Anti-Cheat: Scroll Speed ────────────────────────────────────────────
+    const lastScrollTimeRef    = useRef(Date.now());
+    const scrollViolationsRef  = useRef(0);
 
     // ── Ping / Comprehension State ──────────────────────────────────────────
     const [pingVisible, setPingVisible]           = useState(false);
@@ -68,6 +74,9 @@ export default function ReadingSession({ navigation, route }) {
     const [pingStats, setPingStats]               = useState({ total: 0, correct: 0 });
     const pingCountdownRef = useRef(null);
     const [pingCountdown, setPingCountdown]       = useState(30); // 30s to answer
+
+    // ── Speed Warning Toast ─────────────────────────────────────────────────
+    const [showSpeedWarning, setShowSpeedWarning] = useState(false);
 
     // ── Results State ───────────────────────────────────────────────────────
     const [sessionFinished, setSessionFinished]   = useState(false);
@@ -186,18 +195,26 @@ export default function ReadingSession({ navigation, route }) {
         }
     };
 
-    const savePomodoroSettings = (w, b) => {
+    const saveSessionSettings = (w, b, p) => {
         setWorkDurationMins(w);
         setBreakDurationMins(b);
         workDurationRef.current = w;
         breakDurationRef.current = b;
         
+        pingIntervalRef.current = p;
+        setPingIntervalMins(p);
+
         if (isPomodoroEnabled) {
             pomodoroPhaseRef.current = 'focus';
             setPomodoroPhase('focus');
             setPomodoroSeconds(w * 60);
         }
-        setShowPomodoroSettings(false);
+        
+        if (isRunningRef.current) {
+            schedulePing();
+        }
+
+        setShowSessionSettings(false);
     };
 
     const startSession = () => {
@@ -254,10 +271,50 @@ export default function ReadingSession({ navigation, route }) {
     };
 
     const handleScroll = (event) => {
-        const newY = event.nativeEvent.contentOffset.y;
-        // Only reset if actually scrolled (avoids false positives from touch jiggles)
+        const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+        const newY = contentOffset.y;
+        
+        // Calculate scroll percentage mapping (0.0 to 1.0)
+        const maxScroll = contentSize.height - layoutMeasurement.height;
+        if (maxScroll > 0) {
+            const currentPercentage = Math.min(1, Math.max(0, newY / maxScroll));
+            // Only update if they've scrolled further down (prevents going backward from showing early questions)
+            if (currentPercentage > scrollPercentageRef.current) {
+                scrollPercentageRef.current = currentPercentage;
+            }
+        }
+
+        // Only reset idle timer if actually scrolled (avoids false positives from touch jiggles)
         if (Math.abs(newY - lastScrollY.current) > 5) {
+            const now = Date.now();
+            const timeDiff = now - lastScrollTimeRef.current;
+            
+            if (timeDiff > 0) {
+                const distance = Math.abs(newY - lastScrollY.current);
+                const speed = distance / timeDiff; // pixels per ms
+                
+                // If they scroll more than 3px per millisecond (e.g. 1500px in 500ms)
+                if (speed > 3.0) {
+                    scrollViolationsRef.current += 1;
+                    if (scrollViolationsRef.current >= 3) {
+                        if (isRunningRef.current) {
+                            setShowSpeedWarning(true);
+                            setTimeout(() => {
+                                setShowSpeedWarning(false);
+                            }, 3000);
+                        }
+                        scrollViolationsRef.current = 0;
+                    }
+                } else {
+                    // Slowly decay violations if they scroll normally
+                    if (scrollViolationsRef.current > 0) {
+                        scrollViolationsRef.current = Math.max(0, scrollViolationsRef.current - 0.5);
+                    }
+                }
+            }
+            lastScrollTimeRef.current = now;
             lastScrollY.current = newY;
+
             if (isRunningRef.current) {
                 resetIdleTimer();
             }
@@ -273,16 +330,24 @@ export default function ReadingSession({ navigation, route }) {
             if (isRunningRef.current) {
                 firePing();
             }
-        }, PING_INTERVAL_MS);
+        }, pingIntervalRef.current * 60_000);
     };
 
     const firePing = () => {
         if (!docData?.ping_questions?.length) return;
 
         const questions = docData.ping_questions;
-        const index = pingIndex % questions.length;  // cycle through available questions
-        setCurrentPing(questions[index]);
-        setPingIndex(prev => prev + 1);
+        
+        // Use scroll percentage to pick a question chronologically
+        // e.g. 50% scrolled out of 20 questions = index 10
+        let mappedIndex = Math.floor(scrollPercentageRef.current * questions.length);
+        
+        // Safety bounds
+        if (mappedIndex >= questions.length) mappedIndex = questions.length - 1;
+        if (mappedIndex < 0) mappedIndex = 0;
+
+        setCurrentPing(questions[mappedIndex]);
+        setPingIndex(prev => prev + 1); // Keep tracking total pings for engagement score
         setSelectedPingAnswer(null);
         setPingAnswered(false);
         setPingCountdown(30);
@@ -490,12 +555,25 @@ export default function ReadingSession({ navigation, route }) {
                     </TouchableOpacity>
                     <TouchableOpacity 
                         onPress={togglePomodoro}
-                        onLongPress={() => setShowPomodoroSettings(true)}
                         style={{ opacity: isPomodoroEnabled ? 1 : 0.6, marginLeft: 20 }}
                     >
                         <Text style={{ fontSize: 24 }}>🍅</Text>
                     </TouchableOpacity>
+                    <TouchableOpacity 
+                        onPress={() => setShowSessionSettings(true)}
+                        style={{ marginLeft: 15 }}
+                    >
+                        <Ionicons name="settings" size={24} color={theme.secondaryColor} />
+                    </TouchableOpacity>
                 </View>
+
+                {/* Speed Warning Toast */}
+                {showSpeedWarning && (
+                    <View style={[styles.speedWarningToast, { borderColor: theme.primaryColor }]}>
+                        <Ionicons name="warning" size={24} color={theme.primaryColor} />
+                        <Text style={styles.speedWarningText}>Scrolling too fast! Please read normally.</Text>
+                    </View>
+                )}
 
                 <View style={styles.hudCenter}>
                     <Text style={[styles.hudTimer, { color: isRunning ? theme.primaryColor : '#FF4444' }]}>
@@ -641,12 +719,12 @@ export default function ReadingSession({ navigation, route }) {
                 </View>
             </Modal>
 
-            {/* ── POMODORO SETTINGS MODAL ── */}
-            <Modal visible={showPomodoroSettings} transparent animationType="fade">
+            {/* ── SESSION SETTINGS MODAL ── */}
+            <Modal visible={showSessionSettings} transparent animationType="fade">
                 <View style={styles.pingOverlay}>
                     <View style={[styles.pingBox, { backgroundColor: '#0D0D0D', borderColor: theme.primaryColor }]}>
                         <Text style={[styles.pingHeaderText, { color: theme.primaryColor, marginBottom: 20 }]}>
-                            🍅 Pomodoro Settings
+                            ⚙️ Session Settings
                         </Text>
 
                         <Text style={{ color: 'white', marginBottom: 8, fontWeight: 'bold' }}>Focus Duration (minutes)</Text>
@@ -665,23 +743,27 @@ export default function ReadingSession({ navigation, route }) {
                             onChangeText={t => breakDurationRef.current = parseInt(t) || 5}
                         />
 
+                        <Text style={{ color: 'white', marginBottom: 8, marginTop: 15, fontWeight: 'bold' }}>Question Popup Interval (minutes)</Text>
+                        <TextInput 
+                            style={styles.settingsInput}
+                            keyboardType="number-pad"
+                            defaultValue={pingIntervalRef.current.toString()}
+                            onChangeText={t => pingIntervalRef.current = parseInt(t) || 3}
+                        />
+
                         <TouchableOpacity 
                             style={[styles.doneBtn, { backgroundColor: theme.primaryColor, marginTop: 25, paddingVertical: 14 }]}
-                            onPress={() => savePomodoroSettings(workDurationRef.current, breakDurationRef.current)}
+                            onPress={() => saveSessionSettings(workDurationRef.current, breakDurationRef.current, pingIntervalRef.current)}
                         >
                             <Text style={[styles.doneBtnText, { textAlign: 'center' }]}>Save Settings</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity 
                             style={{ marginTop: 15, paddingVertical: 10 }}
-                            onPress={() => setShowPomodoroSettings(false)}
+                            onPress={() => setShowSessionSettings(false)}
                         >
                             <Text style={{ color: 'gray', textAlign: 'center', fontWeight: 'bold' }}>Cancel</Text>
                         </TouchableOpacity>
-
-                        <Text style={{ color: 'gray', fontSize: 11, marginTop: 20, textAlign: 'center' }}>
-                            Long-press the 🍅 icon during reading to open this menu.
-                        </Text>
                     </View>
                 </View>
             </Modal>

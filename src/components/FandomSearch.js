@@ -50,9 +50,9 @@ export default function FandomSearch({ playerClass, onSelect }) {
 
             {/* Render the results using .map() */}
             <View>
-                {results.map((item) => (
+                {results.map((item, index) => (
                     <TouchableOpacity //a rouchable oapcity is like a button but with more styling options
-                        key={item.id.toString()} 
+                        key={`${item.id}-${index}`} 
                         style={styles.resultItem} 
                         onPress={() => onSelect(item.id, item.title, item.imageUrl)} // When a result is pressed, call the onSelect function passed as a prop with the item's details
                     >

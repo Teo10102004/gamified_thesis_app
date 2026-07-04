@@ -200,11 +200,32 @@ export default function QuestSetup({ navigation }) {
 
                 <Text style={[styles.sectionLabel, { color: theme.primaryColor, marginTop: 30 }]}>2. Quest Length</Text>
                 <View style={styles.counterRow}>
-                    <TouchableOpacity onPress={() => setQuestionCount(Math.max(3, questionCount - 1))} style={[styles.counterButton, { backgroundColor: theme.secondaryColor }]}>
+                    <TouchableOpacity onPress={() => setQuestionCount(Math.max(3, (Number(questionCount) || 0) - 1))} style={[styles.counterButton, { backgroundColor: theme.secondaryColor }]}>
                         <Ionicons name="remove" size={24} color="#000" />
                     </TouchableOpacity>
-                    <Text style={[styles.counterText, { color: theme.textColor }]}>{questionCount} Questions</Text>
-                    <TouchableOpacity onPress={() => setQuestionCount(Math.min(10, questionCount + 1))} style={[styles.counterButton, { backgroundColor: theme.secondaryColor }]}>
+                    <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                        <TextInput 
+                            style={[styles.counterText, { color: theme.textColor, textAlign: 'center', minWidth: 45, borderBottomWidth: 1, borderBottomColor: theme.secondaryColor }]}
+                            keyboardType="numeric"
+                            maxLength={3}
+                            value={String(questionCount)}
+                            onChangeText={(text) => {
+                                const parsed = parseInt(text.replace(/[^0-9]/g, ''), 10);
+                                if (!isNaN(parsed)) {
+                                    setQuestionCount(Math.min(100, parsed));
+                                } else if (text === '') {
+                                    setQuestionCount('');
+                                }
+                            }}
+                            onEndEditing={() => {
+                                if (questionCount === '' || questionCount < 3) {
+                                    setQuestionCount(3);
+                                }
+                            }}
+                        />
+                        <Text style={[styles.counterText, { color: theme.textColor }]}> Questions</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => setQuestionCount(Math.min(100, (Number(questionCount) || 0) + 1))} style={[styles.counterButton, { backgroundColor: theme.secondaryColor }]}>
                         <Ionicons name="add" size={24} color="#000" />
                     </TouchableOpacity>
                 </View>

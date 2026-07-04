@@ -275,7 +275,11 @@ export const updateUserStreak = async (userId) => {
 
         if (fetchError) throw fetchError;
 
-        const today = new Date().toISOString().split('T')[0];
+        const getLocalYMD = (d) => {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+
+        const today = getLocalYMD(new Date());
         const lastActive = user.last_active_date;
         
         let newStreak = user.streak_count || 0;
@@ -290,7 +294,7 @@ export const updateUserStreak = async (userId) => {
             // Check if last active was yesterday
             const yesterday = new Date();
             yesterday.setDate(yesterday.getDate() - 1);
-            const yesterdayString = yesterday.toISOString().split('T')[0];
+            const yesterdayString = getLocalYMD(yesterday);
 
             if (lastActive === yesterdayString) {
                 newStreak += 1;
@@ -534,31 +538,34 @@ export const getPublicQuizzes = async (currentUserId) => {
         // Get unique user IDs
         const userIds = [...new Set(quizzes.map(q => q.userid))];
 
-        // Fetch User profiles
+        // Fetch User profiles including visualConfig
         const { data: usersData, error: userError } = await supabase
             .from('User')
-            .select('userId, userName, playerClass, fandomName')
+            .select('userId, userName, playerClass, fandomName, visualConfig')
             .in('userId', userIds);
 
         if (userError) throw userError;
 
-        // Map users for quick lookup
+        // Map users for quick lookup and check hidden status
         const userMap = {};
         if (usersData) {
             usersData.forEach(u => {
                 userMap[u.userId] = {
                     userName: u.userName,
                     playerClass: u.playerClass,
-                    fandomName: u.fandomName
+                    fandomName: u.fandomName,
+                    isHidden: u.visualConfig?.is_quests_hidden === true
                 };
             });
         }
 
-        // Merge creator info into quizzes
-        const enrichedQuizzes = quizzes.map(q => ({
-            ...q,
-            creator: userMap[q.userid] || { userName: 'Unknown' }
-        }));
+        // Merge creator info into quizzes and filter out hidden ones
+        const enrichedQuizzes = quizzes
+            .map(q => ({
+                ...q,
+                creator: userMap[q.userid] || { userName: 'Unknown', isHidden: false }
+            }))
+            .filter(q => !q.creator.isHidden);
 
         return { success: true, quizzes: enrichedQuizzes };
     } catch (e) {
@@ -936,7 +943,16 @@ export const getUserFolders = async (userId, parentId = null) => {
  */
 export const deleteFolder = async (folderId) => {
     try {
-        // Delete all documents in this folder first
+        // Fetch all documents in this folder first so we can delete their reading sessions
+        const { data: docs } = await supabase.from('document').select('documentid').eq('folderid', folderId);
+        
+        if (docs && docs.length > 0) {
+            const docIds = docs.map(d => d.documentid);
+            // Delete all reading sessions associated with these documents
+            await supabase.from('reading_session').delete().in('documentid', docIds);
+        }
+
+        // Delete all documents in this folder
         await supabase.from('document').delete().eq('folderid', folderId);
 
         // Then delete the folder itself
@@ -1012,6 +1028,24 @@ export const getFolderDocuments = async (userId, folderId = null) => {
     }
 };
 
+// Helper to dynamically shuffle ping questions so existing documents aren't stuck with correctIndex 0
+const shufflePingQuestions = (questions) => {
+    if (!Array.isArray(questions)) return questions;
+    return questions.map(q => {
+        if (!q.options || q.correctIndex === undefined) return q;
+        let optionsWithIndex = q.options.map((opt, idx) => ({ text: opt, isCorrect: idx === q.correctIndex }));
+        for (let i = optionsWithIndex.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [optionsWithIndex[i], optionsWithIndex[j]] = [optionsWithIndex[j], optionsWithIndex[i]];
+        }
+        return {
+            ...q,
+            options: optionsWithIndex.map(opt => opt.text),
+            correctIndex: optionsWithIndex.findIndex(opt => opt.isCorrect)
+        };
+    });
+};
+
 /**
  * Fetches the full text + ping questions for a single document (for reading).
  */
@@ -1029,8 +1063,8 @@ export const getDocumentForReading = async (documentId) => {
             success: true,
             document: {
                 ...data,
-                // Parse ping_questions back from its stored JSON string
-                ping_questions: data.ping_questions ? JSON.parse(data.ping_questions) : []
+                // Parse ping_questions back from its stored JSON string and shuffle them
+                ping_questions: data.ping_questions ? shufflePingQuestions(JSON.parse(data.ping_questions)) : []
             }
         };
     } catch (error) {
